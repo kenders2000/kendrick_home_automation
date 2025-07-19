@@ -1,15 +1,21 @@
 import asyncio
 from pyartnet import ArtNetNode
 
-class StairLightingController:
-    def __init__(self, ip='192.168.0.100', universe=0):
+class CinemaRoomController:
+    def __init__(self, ip='192.168.1.95', universe=0):
         self.ip = ip
         self.universe_id = universe
-        self.num_steps = 14
+        self.step_channels = list(range(2, 16))
+        self.channels = {
+            "steps": list(range(2, 16)),
+            "stars_intensitiy": 0,
+            "stars_speed": 1,
+            "stars_led": 21,
+            "acoustic_panels": [16, 17, 18, 19, 20],
+        }
         self.node = ArtNetNode(ip)
         self.universe = self.node.add_universe(universe)
         self.steps = []
-
         self._setup_lights()
 
     def _setup_lights(self):
