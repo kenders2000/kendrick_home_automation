@@ -9,3 +9,7 @@ cd TOF_Laser_Range_Sensor_demo/
 
 sudo raspi-config nonint do_serial 2
 ```
+
+raspberry pi 5 1 - home assistent server
+
+Raspberry pi 4 - dmx server - light fixurre for all dmx
