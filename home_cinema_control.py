@@ -9,6 +9,15 @@ from PySide6.QtCore import Qt
 import sys
 import asyncio
 import threading
+from fastapi import FastAPI
+import uvicorn
+import asyncio
+
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import threading
+
 
 class LightingUI(QWidget):
     def __init__(self, controller):
@@ -70,14 +79,14 @@ class CinemaRoomController:
                 },
         }
 
-        self.stairs_ambiant_pulse = [True] * 10 + [False] * 4
+        self.stairs_ambiant_pulse = [True] * 14 # + [False] * 2
         self.channels = {
-            "steps": list(range(3, 17)),
+            "steps": list(range(3, 18)),
             "stars_intensity": 1,
             "stars_speed": 2,
-            "panels": [17, 18, 19, 20, 21, 22],
+            "panels": [19, 20, 21, 22, 23, 24],
         }
-        # Each effect writes its value here
+        # Each layer stores intensity values for 
         self.panel_layers = {
             "ambient": [0,0,0,0,0,0],
             "sensor": [0,0,0,0,0,0],
@@ -89,12 +98,16 @@ class CinemaRoomController:
             "sensor":  [0 for _ in range(14)],
             "manual": [0 for _ in range(14)],
         }
+        self.star_layers = {
+            "ambient": [0],
+            "sensor":  [0],
+            "manual": [0],
+        }
 
         self._running = True
-        self.max_intensity = 165
-        self.min_intensity = 0
         self.n_panels = 6
         self.n_steps = 14
+        self.ambient_multiplier = 1.0
 
         self.ambient_panel_intensity_max = 210
         self.ambient_panel_intensity_min = 150
@@ -106,8 +119,7 @@ class CinemaRoomController:
             sequence_length=100, 
             n_sequences=self.n_panels
         )
-        # self.ambient_panel_intensity_sequence = (self.ambient_panel_intensity_min + (self.ambient_panel_intensity_max - self.ambient_panel_intensity_min) * np.random.random(100)).astype(int).tolist()
-        # self.ambient_delay_sequence = (np.random.random(100) * self.ambient_panel_delay_max).tolist()
+
 
         self.ambient_step_intensity_max = 100
         self.ambient_step_intensity_min = 10
@@ -120,41 +132,8 @@ class CinemaRoomController:
             n_sequences=self.n_steps
         )        
         
-        
-        
-        
-        # self.ambient_step_intensity_sequence = (self.ambient_step_intensity_min + (self.ambient_step_intensity_max - self.ambient_step_intensity_min) * np.random.random(100)).astype(int).tolist()
-        # self.ambient_delay_sequence = (np.random.random(100) * self.ambient_step_delay_max).tolist()
-
-
-
-
-        # self.panel_intensity_sequences = []
-        # self.panel_delay_sequences = []
-        # self.stpes_intensity_sequences = []
-        # self.steps_delay_sequences = []
-        # for panel_n in range(self.n_panels):
-        #     # Create a shuffled copy
-        #     ambient_intensity_sequence_copy = self.ambient_panel_intensity_sequence[:]
-        #     random.shuffle(ambient_intensity_sequence_copy)
-            
-        #     ambient_delay_sequence_copy = self.ambient_delay_sequence[:]
-        #     random.shuffle(ambient_delay_sequence_copy)
-
-        #     self.panel_intensity_sequences.append(ambient_intensity_sequence_copy)
-        #     self.panel_delay_sequences.append(ambient_delay_sequence_copy)
-
-        # for panel_n in range(self.n_steps):
-        #     # Create a shuffled copy
-        #     ambient_intensity_sequence_copy = self.ambient_step_intensity_sequence[:]
-        #     random.shuffle(ambient_intensity_sequence_copy)
-            
-        #     ambient_delay_sequence_copy = self.ambient_delay_sequence[:]
-        #     random.shuffle(ambient_delay_sequence_copy)
-
-        #     self.stpes_intensity_sequences.append(ambient_intensity_sequence_copy)
-        #     self.steps_delay_sequences.append(ambient_delay_sequence_copy)
-
+    def set_ambient_multiplier(self, ambient_multiplier):
+        self.ambient_multiplier = ambient_multiplier
 
     def get_rand_sequences(self, intensity_min=30, intensity_max=120, delay_max=3, sequence_length=100, n_sequences=1):
         intensity_sequences = []
@@ -172,8 +151,6 @@ class CinemaRoomController:
             intensity_sequences.append(ambient_intensity_sequence_copy)
             delay_sequences.append(ambient_delay_sequence_copy)
         return intensity_sequences, delay_sequences
-
-
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
@@ -236,7 +213,8 @@ class CinemaRoomController:
                 ):
                 controller_intensities[controller_n, local_channel_n] = panel_intensity
 
-            
+            print("Step intensities:", step_intensities)
+            print("Panel intensities:", panel_intensities)
             for controller_n, controller in enumerate(self.linear_drive_dmx_controllers):
                 controller.add_fade(controller_intensities[controller_n], self.global_fade)
                 await asyncio.sleep(0.1)  # <-- Needed to pulse and allow fading
@@ -252,7 +230,7 @@ class CinemaRoomController:
                 "sensor": self.panel_layers["sensor"][panel_n],
                 "manual": self.panel_layers["manual"][panel_n],
             }
-            intensities.append( max(layers.values()))
+            intensities.append( int(max(layers.values()) * self.ambient_multiplier) )
         return intensities
     
     def mix_intensity_steps(self):
@@ -265,7 +243,7 @@ class CinemaRoomController:
                 "sensor": self.step_layers["sensor"][panel_n],
                 "manual": self.step_layers["manual"][panel_n],
             }
-            intensities.append( max(layers.values()))
+            intensities.append( int(max(layers.values()) * self.ambient_multiplier) )
         return intensities
 
         # strongest wins
@@ -284,12 +262,6 @@ class CinemaRoomController:
         for step_n in range(self.n_steps):
             if self.stairs_ambiant_pulse[step_n]:
                 tasks.append(asyncio.create_task(self.pulse_step_intensity(step_n)))
-        
-# :       
-# tasks = [
-#             asyncio.create_task(self.pulse_step_intensity(step_n))
-#             for step_n in range(self.n_steps)
-#         ]
         await asyncio.gather(*tasks)
 
     async def pulse_panel_intensity(self, panel_n=0):
@@ -316,19 +288,46 @@ class CinemaRoomController:
             self.pulse_step_intensities(),
             self.update_dmx(),
         )
+
+
 def start_asyncio_loop(controller):
     asyncio.run(controller.run())
 
 
-if __name__ == "__main__":
-    controller = CinemaRoomController()
-    # Start asyncio loop in background thread
-    threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True).start()
 
-    app = QApplication(sys.argv)
-    ui = LightingUI(controller)
-    ui.show()
-    sys.exit(app.exec())
+# Top level instance (used by uvicorn)
+app = FastAPI()
+
+# Add CORS for Home Assistant or frontend calls
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# Global controller instance
+controller = CinemaRoomController()
+
+@app.get("/ambient_multiplier/{value}")
+def set_ambient_multiplier(value: float):
+    controller.set_ambient_multiplier(value)
+    print(value)
+    return {"status": "ok", "ambient_multiplier": value}
+
+@app.on_event("startup")
+def start_controller():
+    thread = threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True)
+    thread.start()
+
+if __name__ == "__main__":
+    pass
+    # Start asyncio loop in background thread
+    # threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True).start()
+
+    # app = QApplication(sys.argv)
+    # ui = LightingUI(controller)
+    # ui.show()
+    # sys.exit(app.exec())
 
     # try:
     #     asyncio.run(controller.run())
