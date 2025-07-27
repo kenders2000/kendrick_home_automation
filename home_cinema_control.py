@@ -180,6 +180,7 @@ class tof:
         else:
             print("not a raspberry pi 5")
             tof = TOF_Sense('/dev/ttyS0', 921600)
+        return tof
 
     def get_distance(self):
         try:
