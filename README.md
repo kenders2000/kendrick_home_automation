@@ -28,5 +28,5 @@ python -m venv env
 source env/bin/activate
 pip install numpy --prefer-binary
 pip install pyserial pyartnet fastapi uvicorn
-
+sudo apt install libopenblas0
 ```
