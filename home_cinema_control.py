@@ -48,6 +48,7 @@ class tof:
 
     def get_distance(self):
         try:
+            await distance = self.tof.get_distance()
             distance = self.tof.TOF_Inquire_Decoding(0)
             return distance
         except Exception as e:
