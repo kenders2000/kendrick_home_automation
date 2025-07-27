@@ -2,7 +2,7 @@
 import sys 
 import time
 sys.path.append("..")  # Append the parent directory to the system path for module imports
-from lib import TOF_Sense  # Import the TOF_Sense module from the 'lib' directory
+import TOF_Sense  # Import the TOF_Sense module from the 'lib' directory
 
 # Function to detect the Raspberry Pi model
 def detect_model():
