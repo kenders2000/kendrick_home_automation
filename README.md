@@ -12,4 +12,21 @@ sudo raspi-config nonint do_serial 2
 
 raspberry pi 5 1 - home assistent server
 
-Raspberry pi 4 - dmx server - light fixurre for all dmx
+Raspberry pi 4 - dmx server - light fixture for all dmx
+
+- 
+
+
+```
+sudo raspi-config
+# Go to Interface Options > Serial Port:
+# Login shell over serial: No
+# Enable serial port hardware: Yes
+
+
+python -m venv env
+source env/bin/activate
+pip install numpy --prefer-binary
+pip install pyserial pyartnet fastapi uvicorn
+
+```
