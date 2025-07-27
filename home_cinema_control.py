@@ -45,11 +45,12 @@ class tof():
         if "Raspberry Pi 5" in detect_pi_model():  # Check if the model is Raspberry Pi 5
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyAMA0', 921600)  # Initialize TOF_Sense with ttyAMA0 for Raspberry Pi 5
         else:
+            print("not a raspberry pi 5")
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
+            
     def get_distance(self):
-        distance = self.tof.get_distance()
+        distance = self.tof.tof.TOF_Inquire_Decoding(0)
         print("tof distance:", distance)
-
         return distance
 
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding

@@ -55,14 +55,27 @@ class TOF_Sense():
         self.ser.flushInput()#Clear the serial port input register 清空串口输入寄存器
 
     def get_distance(self):
-        if self.ser.inWaiting() > 0: #Waiting for serial port data 等待串口数据
-            self.TOF_peek = ord(self.ser.read(1))  #Read a byte and convert it into an integer 读取一个字节并转换成整数
-            if self.TOF_peek == TOF_FRAME_HEADER: #If it is a frame header, restart the loop count 如果是帧头,则重新开始循环计数
-                self.count_i = 0
-                TOF_rx_data[self.count_i] = self.TOF_peek #Store the read data into a tuple for later decoding 将读取到的数据存入元组中，用于后面解码使用
-            else:
-                TOF_rx_data[self.count_i] = self.TOF_peek #Store the read data into a tuple for later decoding 将读取到的数据存入元组中，用于后面解码使用
+        TOF_distance = 0.0
+        TOF_tx_data[4] = id #Add the ID you want to query to the command 将需要查询的ID添加到命令中
+        TOF_tx_data[7] = id + 0x63 #Update Checksum 更新校验和
+
+        self.ser.flushInput() #Clear the serial port buffer 清空串口缓存
+        self.ser.write(bytearray(TOF_tx_data)) #Start query 开始查询
+        time.sleep(0.01) #Waiting for the sensor to return data 等待传感器返回数据
+        TOF_rx_data = list(self.ser.read(16)) #Reading sensor data 读取传感器数据
+
+        for i in range (0,15):
+            self.check_sum = (self.check_sum + TOF_rx_data[i]) & 0xFF #Calculate the checksum and take the lowest byte 计算检验和并取最低一个字节
+
+        #Determine whether the decoding is correct 判断解码是否正确
+        if (TOF_rx_data[0] == TOF_FRAME_HEADER) and (TOF_rx_data[1] == TOF_FUNCTION_MARK) and (self.check_sum == TOF_rx_data[15]):
+            # print("TOF id is: "+ str(TOF_rx_data[3]))  #ID of the TOF module TOF 模块的 ID
+
+            TOF_system_time = TOF_rx_data[4] | TOF_rx_data[5]<<8 | TOF_rx_data[6]<<16 | TOF_rx_data[7]<<24
+            # print("TOF system time is: "+str(TOF_system_time)+'ms') #The time after the TOF module is powered on TOF模块上电后经过的时间        
+
             TOF_distance = (TOF_rx_data[8]) | (TOF_rx_data[9]<<8) | (TOF_rx_data[10]<<16)
+            # print("TOF distance is: "+str(TOF_distance)+'mm') #The distance output by the TOF module TOF模块输出的距离   
         return TOF_distance
     
     #Test active output mode 测试主动输出模式
