@@ -46,8 +46,8 @@ class tof():
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyAMA0', 921600)  # Initialize TOF_Sense with ttyAMA0 for Raspberry Pi 5
         else:
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
-    async def get_distance(self):
-        return self.tof.get_distance()
+    def get_distance(self):
+        self.tof.get_distance()
 
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
 # try:
