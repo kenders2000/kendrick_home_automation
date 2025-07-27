@@ -54,14 +54,14 @@ class TOF_Sense():
         self.ser = serial.Serial(dev,baud)
         self.ser.flushInput()#Clear the serial port input register 清空串口输入寄存器
 
-    async def get_distance(self, id=0):
+    def get_distance(self, id=0):
         TOF_distance = 0.0
         TOF_tx_data[4] = id #Add the ID you want to query to the command 将需要查询的ID添加到命令中
         TOF_tx_data[7] = id + 0x63 #Update Checksum 更新校验和
 
         self.ser.flushInput() #Clear the serial port buffer 清空串口缓存
         self.ser.write(bytearray(TOF_tx_data)) #Start query 开始查询
-        asyncio.sleep(0.01) #Waiting for the sensor to return data 等待传感器返回数据
+        time.sleep(0.01) #Waiting for the sensor to return data 等待传感器返回数据
         TOF_rx_data = list(self.ser.read(16)) #Reading sensor data 读取传感器数据
 
         for i in range (0,15):
