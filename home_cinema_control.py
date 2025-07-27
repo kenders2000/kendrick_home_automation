@@ -35,7 +35,8 @@ def detect_pi_model():
     return model
 
 class tof():
-    def __init__(self):
+    def __init__(self, delay = 0.01):
+        self.delay = delay
         self.configure_tof()
 
     def configure_tof(self):
@@ -48,9 +49,10 @@ class tof():
             print("not a raspberry pi 5")
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
 
-    def get_distance(self):
+    async def get_distance(self):
         distance = self.tof.TOF_Inquire_Decoding(0)
         print("tof distance:", distance)
+        await asyncio.sleep(self.delay)
         return distance
 
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
