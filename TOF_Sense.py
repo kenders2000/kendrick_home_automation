@@ -54,7 +54,7 @@ class TOF_Sense():
         self.ser = serial.Serial(dev,baud)
         self.ser.flushInput()#Clear the serial port input register 清空串口输入寄存器
 
-    def get_distance(self):
+    def get_distance(self, id=0):
         TOF_distance = 0.0
         TOF_tx_data[4] = id #Add the ID you want to query to the command 将需要查询的ID添加到命令中
         TOF_tx_data[7] = id + 0x63 #Update Checksum 更新校验和
