@@ -36,7 +36,7 @@ def detect_pi_model():
 
 class tof():
     def __init__(self):
-        self.tof = self.configure_tof()
+        self.configure_tof()
 
     def configure_tof(self):
         # Function to detect the Raspberry Pi model
