@@ -155,7 +155,8 @@ class TOF_Sense():
             self.ser.flushInput() #Clear the serial port input register 清空串口输入寄存器
         else:
             print("Verification failed.")
-        self.check_sum = 0 #Clear Checksum 清空校验和
+        self.check_sum = 0 #Clear Checksum 清空校验和 
+        return TOF_distance
 
 
 def detect_pi_model():
@@ -176,21 +177,19 @@ class tof:
 
     def configure_tof(self):
         if "Raspberry Pi 5" in detect_pi_model():
-            tof = TOF_Sense('/dev/ttyAMA0', 921600)
+            return TOF_Sense('/dev/ttyAMA0', 921600)
         else:
             print("not a raspberry pi 5")
-            tof = TOF_Sense('/dev/ttyS0', 921600)
-        return tof
+            return TOF_Sense('/dev/ttyS0', 921600)
 
     def get_distance(self):
         try:
-            distance = self.tof.get_distance()
-            self.tof.TOF_Inquire_Decoding(0)
+            # Use synchronous decoder and capture the printed distance
+            distance = self.tof.TOF_Inquire_Decoding(0)  # ← MODIFY THIS FUNCTION TO RETURN DISTANCE
             return distance
         except Exception as e:
             print("[ERROR] Failed to get ToF distance:", e)
-            return None
-        
+            return None        
         
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
 # try:
