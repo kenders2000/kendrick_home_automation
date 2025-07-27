@@ -84,24 +84,24 @@ class TOF_Sense():
 
                 #Determine whether the decoding is correct 判断解码是否正确
                 if (TOF_rx_data[0] == TOF_FRAME_HEADER) and (TOF_rx_data[1] == TOF_FUNCTION_MARK) and (self.check_sum == TOF_rx_data[15]):
-                    # print("TOF id is: "+ str(TOF_rx_data[3]))  #ID of the TOF module TOF 模块的 ID
+                    print("TOF id is: "+ str(TOF_rx_data[3]))  #ID of the TOF module TOF 模块的 ID
 
                     TOF_system_time = TOF_rx_data[4] | TOF_rx_data[5]<<8 | TOF_rx_data[6]<<16 | TOF_rx_data[7]<<24
-                    # print("TOF system time is: "+str(TOF_system_time)+'ms') #The time after the TOF module is powered on TOF模块上电后经过的时间        
+                    print("TOF system time is: "+str(TOF_system_time)+'ms') #The time after the TOF module is powered on TOF模块上电后经过的时间        
 
                     TOF_distance = (TOF_rx_data[8]) | (TOF_rx_data[9]<<8) | (TOF_rx_data[10]<<16)
-                    # print("TOF distance is: "+str(TOF_distance)+'mm') #The distance output by the TOF module TOF模块输出的距离   
+                    print("TOF distance is: "+str(TOF_distance)+'mm') #The distance output by the TOF module TOF模块输出的距离   
             
                     TOF_status = TOF_rx_data[11]
-                    # print("TOF status is: "+str(TOF_status)) #Distance status indication output by TOF module TOF模块输出的距离状态指示
+                    print("TOF status is: "+str(TOF_status)) #Distance status indication output by TOF module TOF模块输出的距离状态指示
             
                     TOF_signal_strength = TOF_rx_data[12] | TOF_rx_data[13]<<8
-                    # print("TOF signal strength is: "+str(TOF_signal_strength)) #The signal strength output by the TOF module TOF模块输出的信号强度
+                    print("TOF signal strength is: "+str(TOF_signal_strength)) #The signal strength output by the TOF module TOF模块输出的信号强度
 
                     TOF_range_precision = TOF_rx_data[14]
-                    # print("TOF range precision is: "+str(TOF_range_precision)) #The repeatability accuracy reference value output by the TOF module is invalid for Type C, Type D and Mini. TOF模块输出的重复测距精度参考值，对于C型,D型和Mini型是无效的
+                    print("TOF range precision is: "+str(TOF_range_precision)) #The repeatability accuracy reference value output by the TOF module is invalid for Type C, Type D and Mini. TOF模块输出的重复测距精度参考值，对于C型,D型和Mini型是无效的
                     
-                    # print("")
+                    print("")
                     self.ser.flushInput() #Clear the serial port input register 清空串口输入寄存器
                 else:
                     print("Verification failed.")
