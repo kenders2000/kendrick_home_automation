@@ -26,7 +26,7 @@ else:
 try:
     while True:  # Infinite loop to keep the program running
         tof.TOF_Active_Decoding()  # Perform active TOF decoding (Active Output Example)
-        # tof.TOF_Inquire_Decoding(0)  # Uncomment this line to perform query-based TOF decoding (Example query output)
+        tof.TOF_Inquire_Decoding(0)  # Uncomment this line to perform query-based TOF decoding (Example query output)
         time.sleep(0.01)  # Sleep for 0.02 seconds (default refresh rate is 50Hz; for 100Hz, use 0.01 seconds)
 
 except KeyboardInterrupt:  # Handle the KeyboardInterrupt exception to allow graceful exit
