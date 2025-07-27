@@ -17,7 +17,47 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import threading
+#coding: UTF-8
+import sys 
+import time
+sys.path.append("..")  # Append the parent directory to the system path for module imports
+import TOF_Sense  # Import the TOF_Sense module from the 'lib' directory
 
+def detect_pi_model():
+    """
+    Detects the Raspberry Pi model by reading the device tree model file.
+    
+    Returns:
+        str: The model string of the Raspberry Pi.
+    """
+    with open('/proc/device-tree/model') as f:  # Open the device tree model file
+        model = f.read().strip()  # Read and strip the model string
+    return model
+
+class tof():
+    def __init__(self):
+        self.tof = self.configure_tof()
+
+    def configure_tof(self):
+        # Function to detect the Raspberry Pi model
+
+        # Detect the Raspberry Pi model and initialize the TOF_Sense object with the appropriate serial port
+        if "Raspberry Pi 5" in detect_pi_model():  # Check if the model is Raspberry Pi 5
+            self.tof = TOF_Sense.TOF_Sense('/dev/ttyAMA0', 921600)  # Initialize TOF_Sense with ttyAMA0 for Raspberry Pi 5
+        else:
+            self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
+    async def get_distance(self):
+        return self.tof.get_distance()
+
+# # Main loop to continuously perform TOF (Time-of-Flight) decoding
+# try:
+#     while True:  # Infinite loop to keep the program running
+#         tof.TOF_Active_Decoding()  # Perform active TOF decoding (Active Output Example)
+#         # tof.TOF_Inquire_Decoding(0)  # Uncomment this line to perform query-based TOF decoding (Example query output)
+#         time.sleep(0.01)  # Sleep for 0.02 seconds (default refresh rate is 50Hz; for 100Hz, use 0.01 seconds)
+
+# except KeyboardInterrupt:  # Handle the KeyboardInterrupt exception to allow graceful exit
+#     print("Quit.")  # Print a message indicating the program is quitting
 
 # pyartnet fastapi numpy uvicorn
 # class LightingUI(QWidget):
@@ -65,7 +105,7 @@ class CinemaRoomController:
         self.step_channels = list(range(3, 17))
         self.initial_levels = 30
         self.setup_delay = 0.2
-
+        self.tof = tof()
         
         self.lineardriver_controller_mappings = {
             "steps": {
@@ -163,6 +203,12 @@ class CinemaRoomController:
             intensity_sequences.append(ambient_intensity_sequence_copy)
             delay_sequences.append(ambient_delay_sequence_copy)
         return intensity_sequences, delay_sequences
+
+    async def detect_distance(self):
+        await asyncio.sleep(0.01)
+        distatance = self.tof.get_distance()
+        print("tof distance:" distatance)
+        return self.tof.get_distance()
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
@@ -327,6 +373,7 @@ class CinemaRoomController:
     async def run(self):
         await self.setup()
         await asyncio.gather(
+            self.detect_distance(),
             self.pulse_panels_intensities(),
             self.pulse_step_intensities(),
             self.pulse_star_intensities(),
