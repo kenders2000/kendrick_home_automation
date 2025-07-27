@@ -61,7 +61,7 @@ class TOF_Sense():
 
         self.ser.flushInput() #Clear the serial port buffer 清空串口缓存
         self.ser.write(bytearray(TOF_tx_data)) #Start query 开始查询
-        time.sleep(0.05) #Waiting for the sensor to return data 等待传感器返回数据
+        time.sleep(0.01) #Waiting for the sensor to return data 等待传感器返回数据
         TOF_rx_data = list(self.ser.read(16)) #Reading sensor data 读取传感器数据
 
         for i in range (0,15):
