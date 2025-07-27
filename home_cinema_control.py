@@ -52,7 +52,6 @@ class tof():
     async def get_distance(self):
         distance = self.tof.TOF_Inquire_Decoding(0)
         print("tof distance:", distance)
-        await asyncio.sleep(self.delay)
         return distance
 
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
