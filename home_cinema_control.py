@@ -240,6 +240,7 @@ class tof:
 
 class CinemaRoomController:
     def __init__(self, ip='192.168.1.191', universe_id=0, port=6454):
+        self.distance = 0.0
         self.ip = ip
         self.port = port
         self.global_fade = 1000
@@ -348,10 +349,10 @@ class CinemaRoomController:
 
     async def detect_distance(self):
         while self._running:
-            distance = self.tof.get_distance()  # ✅ now it's sync
-            print("ToF distance:", distance)
+            self.distance = self.tof.get_distance()  # ✅ now it's sync
+            print("ToF distance:", self.distance)
             await asyncio.sleep(0.01)
-            return distance
+            # return distance
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
