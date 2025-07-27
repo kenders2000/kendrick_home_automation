@@ -206,9 +206,9 @@ class CinemaRoomController:
 
     async def detect_distance(self):
         await asyncio.sleep(0.01)
-        distatance = self.tof.get_distance()
-        print("tof distance:" distatance)
-        return self.tof.get_distance()
+        distance = self.tof.get_distance()
+        print("tof distance:" distance)
+        return distance
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
