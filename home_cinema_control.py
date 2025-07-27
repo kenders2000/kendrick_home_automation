@@ -210,11 +210,11 @@ class CinemaRoomController:
             delay_sequences.append(ambient_delay_sequence_copy)
         return intensity_sequences, delay_sequences
 
-async def detect_distance(self):
-    while self._running:
-        distance = self.tof.get_distance()  # ✅ now it's sync
-        print("ToF distance:", distance)
-        await asyncio.sleep(0.1)
+    async def detect_distance(self):
+        while self._running:
+            distance = self.tof.get_distance()  # ✅ now it's sync
+            print("ToF distance:", distance)
+            await asyncio.sleep(0.1)
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
