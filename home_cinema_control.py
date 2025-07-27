@@ -181,9 +181,9 @@ class tof:
             print("not a raspberry pi 5")
             tof = TOF_Sense('/dev/ttyS0', 921600)
 
-    async def get_distance(self):
+    def get_distance(self):
         try:
-            distance = await self.tof.get_distance()
+            distance = self.tof.get_distance()
             self.tof.TOF_Inquire_Decoding(0)
             return distance
         except Exception as e:
