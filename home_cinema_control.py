@@ -34,26 +34,27 @@ def detect_pi_model():
         model = f.read().strip()  # Read and strip the model string
     return model
 
-class tof():
-    def __init__(self, delay = 0.01):
+class tof:
+    def __init__(self, delay=0.01):
         self.delay = delay
         self.configure_tof()
 
     def configure_tof(self):
-        # Function to detect the Raspberry Pi model
-
-        # Detect the Raspberry Pi model and initialize the TOF_Sense object with the appropriate serial port
-        if "Raspberry Pi 5" in detect_pi_model():  # Check if the model is Raspberry Pi 5
-            self.tof = TOF_Sense.TOF_Sense('/dev/ttyAMA0', 921600)  # Initialize TOF_Sense with ttyAMA0 for Raspberry Pi 5
+        if "Raspberry Pi 5" in detect_pi_model():
+            self.tof = TOF_Sense.TOF_Sense('/dev/ttyAMA0', 921600)
         else:
             print("not a raspberry pi 5")
-            self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
+            self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)
 
-    async def detect_distance(self):
-        while self._running:
-            distance = await self.tof.get_distance()  # ✅ correct
-            print("tof distance:", distance)
-            await asyncio.sleep(0.1)    
+    def get_distance(self):
+        try:
+            distance = self.tof.TOF_Inquire_Decoding(0)
+            return distance
+        except Exception as e:
+            print("[ERROR] Failed to get ToF distance:", e)
+            return None
+        
+        
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
 # try:
 #     while True:  # Infinite loop to keep the program running
@@ -209,11 +210,11 @@ class CinemaRoomController:
             delay_sequences.append(ambient_delay_sequence_copy)
         return intensity_sequences, delay_sequences
 
-    async def detect_distance(self):
-        distance = self.tof.get_distance()
-        print("tof distance:", distance)
-        await asyncio.sleep(0.01)
-        return distance
+async def detect_distance(self):
+    while self._running:
+        distance = self.tof.get_distance()  # ✅ now it's sync
+        print("ToF distance:", distance)
+        await asyncio.sleep(0.1)
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
