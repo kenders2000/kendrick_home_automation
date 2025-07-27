@@ -47,7 +47,8 @@ class tof():
         else:
             self.tof = TOF_Sense.TOF_Sense('/dev/ttyS0', 921600)  # Initialize TOF_Sense with ttyS0 for other models
     def get_distance(self):
-        self.tof.get_distance()
+        distance = self.tof.get_distance()
+        return distance
 
 # # Main loop to continuously perform TOF (Time-of-Flight) decoding
 # try:
