@@ -234,6 +234,8 @@ class StepTOFController:
 
     def get_step_n_from_position(self, position_m):
         print(position_m,  self.n_steps, self.step_start_position, self.step_stop_position)
+        if position_m is None:
+            return int(np.zeros(self.n_steps))
         step_n = self.n_steps * (position_m - self.step_start_position) / (self.step_stop_position - self.step_start_position)
         return step_n
    
