@@ -555,8 +555,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+system = os.getenv("SYSTEM")
+system = "pi "if system is None else system
+
 # Global controller instance
-controller = CinemaRoomController()
+controller = CinemaRoomController(system=system)
 
 @app.get("/ambient_multiplier/{value}")
 def set_ambient_multiplier(value: float):
@@ -566,8 +569,6 @@ def set_ambient_multiplier(value: float):
 
 @app.on_event("startup")
 def start_controller():
-    system = os.getenv("SYSTEM")
-    system = "pi "if system is None else system
     thread = threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True)
     thread.start()
 
