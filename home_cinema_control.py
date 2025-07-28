@@ -20,6 +20,7 @@ import threading
 #coding: UTF-8
 import sys 
 import time
+import os
 sys.path.append("..")  # Append the parent directory to the system path for module imports
 # import TOF_Sense  # Import the TOF_Sense module from the 'lib' directory
 
@@ -565,6 +566,8 @@ def set_ambient_multiplier(value: float):
 
 @app.on_event("startup")
 def start_controller():
+    system = os.getenv("SYSTEM")
+    system = "pi "if system is None else system
     thread = threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True)
     thread.start()
 
