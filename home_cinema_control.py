@@ -234,8 +234,8 @@ class StepTOFController:
 
     def get_step_n_from_position(self, position_m):
         print(position_m,  self.n_steps, self.step_start_position, self.step_stop_position)
-        if position_m is None:
-            return int(np.zeros(self.n_steps))
+        # if position_m is None:
+        #     return int(np.zeros(self.n_steps))
         step_n = self.n_steps * (position_m - self.step_start_position) / (self.step_stop_position - self.step_start_position)
         return step_n
    
@@ -243,7 +243,7 @@ class StepTOFController:
         # if position_m is None:
         #     return np.zeros(self.n_steps)
         step_position = self.get_step_n_from_position(position_m)
-        intensities_new = int(self.asymmetric_gaussian(step_position, direction=direction) * 255)
+        intensities_new = (self.asymmetric_gaussian(step_position, direction=direction) * 255).astype(int)
         print("intensity pre smoothed", intensities_new)
         smoothed_intensity = intensities_new
         # smoothed_intensity = int(self.smoothing.update(intensities_new))
