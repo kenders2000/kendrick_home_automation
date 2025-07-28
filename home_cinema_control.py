@@ -242,7 +242,9 @@ class StepTOFController:
         #     return np.zeros(self.n_steps)
         step_position = self.get_step_n_from_position(position_m)
         intensities_new = self.asymmetric_gaussian(step_position, direction=direction)
+        print("intensity pre smoothed", intensities_new)
         self.intensities = self.smoothing.update(intensities_new)
+        print("intensity smoothed", self.intensities)
         return self.intensities
 
 class CinemaRoomController:
