@@ -247,7 +247,7 @@ class StepTOFController:
         print("intensity pre smoothed", intensities_new)
         self.intensities = self.smoothing.update(intensities_new).astype(int)
         print("intensity smoothed", self.intensities)
-        if self.intensities is None:
+        if self.intensities is not None:
             return self.intensities
         else:
             return np.zeros(self.n_steps)
