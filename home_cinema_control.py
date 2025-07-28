@@ -212,7 +212,7 @@ class StepTOFController:
         self.step_stop_position = step_stop_position
         self.sigma_infront = 0.1
         self.sigma_behind = 4.0
-        self.smoothing = ExponentialAverager(ahlpha=0.1)
+        self.smoothing = ExponentialAverager(alpha=0.1)
         self.reset()
     
     def asymmetric_gaussian(self, step_position, direction="down"):
