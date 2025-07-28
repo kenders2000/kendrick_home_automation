@@ -538,7 +538,7 @@ class CinemaRoomController:
         ]
 
         if self.system == "pi":
-            tasks.append(self.detect_distance)
+            tasks.append(self.detect_distance())
 
         await asyncio.gather(*tasks)
 
