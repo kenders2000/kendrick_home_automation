@@ -243,9 +243,12 @@ class StepTOFController:
         step_position = self.get_step_n_from_position(position_m)
         intensities_new = self.asymmetric_gaussian(step_position, direction=direction)
         print("intensity pre smoothed", intensities_new)
-        self.intensities = self.smoothing.update(intensities_new)
-        print("intensity smoothed", self.intensities)
-        return int(self.intensities * 255)
+        smoothed_intensity = self.smoothing.update(intensities_new)
+        print("intensity smoothed", smoothed_intensity)
+        if smoothed_intensity is None:
+            return int(self.intensities * 255)
+        else:
+            return np.zeros(self.n_steps)
 
 class CinemaRoomController:
     def __init__(self, ip='192.168.1.191', universe_id=0, port=6454, system="mac"):
