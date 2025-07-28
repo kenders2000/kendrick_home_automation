@@ -230,6 +230,7 @@ class StepTOFController:
         self.smoothing.reset()
 
     def get_step_n_from_position(self, position_m):
+        print(position_m,  self.n_steps, self.step_start_position, self.step_stop_position)
         step_n = self.n_steps * (position_m - self.step_start_position) / (self.step_stop_position - self.step_start_position)
         return step_n
    
@@ -358,10 +359,12 @@ class CinemaRoomController:
 
     async def detect_distance(self):
         while self._running:
+
             self.distance = self.tof.get_distance()  # ✅ now it's sync
-            self.step_intensities = self.step_controller.get_intensities(self.distance)
             print("ToF distance:", self.distance)
-            print("ToF distance:", self.step_intensities)
+            self.step_intensities = self.step_controller.get_intensities(self.distance)
+            print("Step intensities:", self.step_intensities)
+
             await asyncio.sleep(0.01)
             # return distance
 
