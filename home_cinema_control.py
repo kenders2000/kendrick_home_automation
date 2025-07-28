@@ -245,8 +245,7 @@ class StepTOFController:
         step_position = self.get_step_n_from_position(position_m)
         intensities_new = (self.asymmetric_gaussian(step_position, direction=direction) * 255).astype(int)
         print("intensity pre smoothed", intensities_new)
-        smoothed_intensity = intensities_new
-        # smoothed_intensity = int(self.smoothing.update(intensities_new))
+        smoothed_intensity = self.smoothing.update(intensities_new).astype(int)
         print("intensity smoothed", smoothed_intensity)
         if smoothed_intensity is None:
             return self.intensities
@@ -375,7 +374,7 @@ class CinemaRoomController:
             print("ToF distance:", self.distance)
             self.step_intensities = self.step_controller.get_intensities(self.distance)
             print("Step intensities:", self.step_intensities)
-
+            self.step_layers["sensor"] = self.step_intensities
             await asyncio.sleep(0.01)
             # return distance
 
@@ -540,6 +539,8 @@ class CinemaRoomController:
             for intensity, delay in zip(self.stars_intensity_sequences[0], self.stars_delay_sequences[0]):
                 self.star_layers["ambient"][0] = intensity
                 await asyncio.sleep(delay)
+
+                
 
     async def run(self):
 
