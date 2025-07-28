@@ -243,7 +243,8 @@ class StepTOFController:
         step_position = self.get_step_n_from_position(position_m)
         intensities_new = self.asymmetric_gaussian(step_position, direction=direction)
         print("intensity pre smoothed", intensities_new)
-        smoothed_intensity = self.smoothing.update(intensities_new)
+        smoothed_intensity = intensities_new
+        # smoothed_intensity = self.smoothing.update(intensities_new)
         print("intensity smoothed", smoothed_intensity)
         if smoothed_intensity is None:
             return int(self.intensities * 255)
