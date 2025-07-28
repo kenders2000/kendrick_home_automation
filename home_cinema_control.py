@@ -220,7 +220,7 @@ class StepTOFController:
         self.reset()
     
     def asymmetric_gaussian(self, step_position, direction="down"):
-        x = np.linspace(0, 14)
+        x = np.arange(14)
         if direction == "down":
             y = asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_infront, sigma_right=self.sigma_behind)
         elif direction == "up":
