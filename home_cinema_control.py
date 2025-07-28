@@ -151,6 +151,7 @@ class tof:
     def __init__(self, delay=0.01):
         self.delay = delay
         self.tof_sense = self.configure_tof()
+        self.distance = 0.0
 
     def configure_tof(self):
         if "Raspberry Pi 5" in detect_pi_model():
@@ -163,10 +164,11 @@ class tof:
         try:
             # Use synchronous decoder and capture the printed distance
             distance = self.tof_sense.TOF_Inquire_Decoding(0)  # ← MODIFY THIS FUNCTION TO RETURN DISTANCE
-            return distance
+            self.distance = distance
+            return self.distance
         except Exception as e:
             print("[ERROR] Failed to get ToF distance:", e)
-            return None        
+            return self.distance        
         
 # Enable logging
 # logging.basicConfig(level=logging.INFO)  # or INFO for less detail
