@@ -164,7 +164,8 @@ class tof:
         try:
             # Use synchronous decoder and capture the printed distance
             distance = self.tof_sense.TOF_Inquire_Decoding(0)  # ← MODIFY THIS FUNCTION TO RETURN DISTANCE
-            self.distance = distance
+            # meters
+            self.distance = distance / 1000
             return self.distance
         except Exception as e:
             print("[ERROR] Failed to get ToF distance:", e)
