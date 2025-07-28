@@ -241,13 +241,13 @@ class StepTOFController:
         # if position_m is None:
         #     return np.zeros(self.n_steps)
         step_position = self.get_step_n_from_position(position_m)
-        intensities_new = self.asymmetric_gaussian(step_position, direction=direction)
+        intensities_new = int(self.asymmetric_gaussian(step_position, direction=direction) * 255)
         print("intensity pre smoothed", intensities_new)
         smoothed_intensity = intensities_new
-        # smoothed_intensity = self.smoothing.update(intensities_new)
+        # smoothed_intensity = int(self.smoothing.update(intensities_new))
         print("intensity smoothed", smoothed_intensity)
         if smoothed_intensity is None:
-            return int(self.intensities * 255)
+            return self.intensities
         else:
             return np.zeros(self.n_steps)
 
