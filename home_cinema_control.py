@@ -245,7 +245,7 @@ class StepTOFController:
         print("intensity pre smoothed", intensities_new)
         self.intensities = self.smoothing.update(intensities_new)
         print("intensity smoothed", self.intensities)
-        return self.intensities
+        return int(self.intensities * 255)
 
 class CinemaRoomController:
     def __init__(self, ip='192.168.1.191', universe_id=0, port=6454, system="mac"):
