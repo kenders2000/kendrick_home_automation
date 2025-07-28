@@ -12,7 +12,7 @@ import threading
 from fastapi import FastAPI
 import uvicorn
 import asyncio
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
