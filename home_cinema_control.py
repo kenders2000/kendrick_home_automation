@@ -241,17 +241,22 @@ class StepTOFController:
         return self.intensities
 
 class CinemaRoomController:
-    def __init__(self, ip='192.168.1.191', universe_id=0, port=6454):
+    def __init__(self, ip='192.168.1.191', universe_id=0, port=6454, system="mac"):
         self.distance = 0.0
         self.ip = ip
         self.port = port
-        self.global_fade = 1000
+        self.global_fade = 500
         self.universe_id = universe_id
         self.step_channels = list(range(3, 17))
         self.initial_levels = 30
         self.setup_delay = 0.2
-        self.tof = tof()
-        self.step_controller = StepTOFController()
+        self.system = system
+        if system == "pi":
+            self.tof = tof()
+            self.step_controller = StepTOFController()
+        elif system == "mac":
+            self.tof = None
+            self.step_controller = None
         
         self.lineardriver_controller_mappings = {
             "steps": {
@@ -297,8 +302,8 @@ class CinemaRoomController:
         self.ambient_multiplier = 1.0
 
         self.ambient_panel_intensity_max = 210
-        self.ambient_panel_intensity_min = 150
-        self.ambient_panel_delay_max = 5
+        self.ambient_panel_intensity_min = 75
+        self.ambient_panel_delay_max = 3
         self.panel_intensity_sequences, self.panel_delay_sequences = self.get_rand_sequences(
             intensity_min=self.ambient_panel_intensity_min, 
             intensity_max=self.ambient_panel_intensity_max, 
@@ -306,7 +311,7 @@ class CinemaRoomController:
             sequence_length=100, 
             n_sequences=self.n_panels
         )
-
+ 
 
         self.ambient_step_intensity_max = 100
         self.ambient_step_intensity_min = 10
@@ -379,7 +384,8 @@ class CinemaRoomController:
         self.universe = self.node.add_universe(self.universe_id)
         self.stars = await self._setup_stars()
         self.linear_drive_dmx_controllers = await self._setup_linear_drive_dmx_controllers()
-        self.step_controller.reset()
+        if self.system == "pi":
+            self.step_controller.reset()
 
     async def _setup_stars(self):
         star_controllers = {}
@@ -434,7 +440,7 @@ class CinemaRoomController:
 
             for controller_n, controller in enumerate(self.linear_drive_dmx_controllers):
                 controller.add_fade(controller_intensities[controller_n], self.global_fade)
-                await asyncio.sleep(0.1)  # <-- Needed to pulse and allow fading
+                await asyncio.sleep(0.01)  # <-- Needed to pulse and allow fading
     
 
     def mix_intensity_panels(self):
@@ -521,14 +527,19 @@ class CinemaRoomController:
                 await asyncio.sleep(delay)
 
     async def run(self):
+
         await self.setup()
-        await asyncio.gather(
-            self.detect_distance(),
+        tasks = [
             self.pulse_panels_intensities(),
             self.pulse_step_intensities(),
             self.pulse_star_intensities(),
             self.update_dmx(),
-        )
+        ]
+
+        if self.system == "pi":
+            tasks.append(self.detect_distance)
+
+        await asyncio.gather(*tasks)
 
 def start_asyncio_loop(controller):
     asyncio.run(controller.run())
