@@ -12,7 +12,7 @@ import threading
 from fastapi import FastAPI
 import uvicorn
 import asyncio
-
+import matplotlib.pyplot as plt
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,30 +50,6 @@ class TOF_Sense():
         self.check_sum = 0 #Checksum 校验和
         self.ser = serial.Serial(dev,baud)
         self.ser.flushInput()#Clear the serial port input register 清空串口输入寄存器
-
-    async def get_distance(self, id=0):
-        TOF_distance = 0.0
-        TOF_tx_data[4] = id #Add the ID you want to query to the command 将需要查询的ID添加到命令中
-        TOF_tx_data[7] = id + 0x63 #Update Checksum 更新校验和
-
-        self.ser.flushInput() #Clear the serial port buffer 清空串口缓存
-        self.ser.write(bytearray(TOF_tx_data)) #Start query 开始查询
-        asyncio.sleep(0.01) #Waiting for the sensor to return data 等待传感器返回数据
-        TOF_rx_data = list(self.ser.read(16)) #Reading sensor data 读取传感器数据
-
-        for i in range (0,15):
-            self.check_sum = (self.check_sum + TOF_rx_data[i]) & 0xFF #Calculate the checksum and take the lowest byte 计算检验和并取最低一个字节
-
-        #Determine whether the decoding is correct 判断解码是否正确
-        if (TOF_rx_data[0] == TOF_FRAME_HEADER) and (TOF_rx_data[1] == TOF_FUNCTION_MARK) and (self.check_sum == TOF_rx_data[15]):
-            # print("TOF id is: "+ str(TOF_rx_data[3]))  #ID of the TOF module TOF 模块的 ID
-
-            TOF_system_time = TOF_rx_data[4] | TOF_rx_data[5]<<8 | TOF_rx_data[6]<<16 | TOF_rx_data[7]<<24
-            # print("TOF system time is: "+str(TOF_system_time)+'ms') #The time after the TOF module is powered on TOF模块上电后经过的时间        
-
-            TOF_distance = (TOF_rx_data[8]) | (TOF_rx_data[9]<<8) | (TOF_rx_data[10]<<16)
-            # print("TOF distance is: "+str(TOF_distance)+'mm') #The distance output by the TOF module TOF模块输出的距离   
-        return TOF_distance
     
     #Test active output mode 测试主动输出模式
     def TOF_Active_Decoding(self):    
@@ -120,7 +96,7 @@ class TOF_Sense():
             print("The serial port does not receive data.") 
 
     #Test query output mode 测试查询输出模式
-    def TOF_Inquire_Decoding(self,id):
+    def TOF_Inquire_Decoding(self, id):
         TOF_tx_data[4] = id #Add the ID you want to query to the command 将需要查询的ID添加到命令中
         TOF_tx_data[7] = id + 0x63 #Update Checksum 更新校验和
 
@@ -191,52 +167,75 @@ class tof:
             print("[ERROR] Failed to get ToF distance:", e)
             return None        
         
-# # Main loop to continuously perform TOF (Time-of-Flight) decoding
-# try:
-#     while True:  # Infinite loop to keep the program running
-#         tof.TOF_Active_Decoding()  # Perform active TOF decoding (Active Output Example)
-#         # tof.TOF_Inquire_Decoding(0)  # Uncomment this line to perform query-based TOF decoding (Example query output)
-#         time.sleep(0.01)  # Sleep for 0.02 seconds (default refresh rate is 50Hz; for 100Hz, use 0.01 seconds)
-
-# except KeyboardInterrupt:  # Handle the KeyboardInterrupt exception to allow graceful exit
-#     print("Quit.")  # Print a message indicating the program is quitting
-
-# pyartnet fastapi numpy uvicorn
-# class LightingUI(QWidget):
-#     def __init__(self, controller):
-#         super().__init__()
-#         self.controller = controller
-#         self.init_ui()
-
-#     def init_ui(self):
-#         self.setWindowTitle("Cinema Lighting Control")
-
-#         layout = QVBoxLayout()
-
-#         self.label = QLabel("Step 0 Ambient Intensity: 0")
-#         layout.addWidget(self.label)
-
-#         self.slider = QSlider(Qt.Horizontal)
-#         self.slider.setMinimum(0)
-#         self.slider.setMaximum(255)
-#         self.slider.valueChanged.connect(self.slider_changed)
-#         layout.addWidget(self.slider)
-
-#         self.stop_button = QPushButton("Stop Lights")
-#         self.stop_button.clicked.connect(self.stop_lights)
-#         layout.addWidget(self.stop_button)
-
-#         self.setLayout(layout)
-
-#     def slider_changed(self, value):
-#         self.label.setText(f"Step 0 Ambient Intensity: {value}")
-#         self.controller.step_layers["ambient"][0] = value
-
-#     def stop_lights(self):
-#         self.controller._running = False
-
 # Enable logging
 # logging.basicConfig(level=logging.INFO)  # or INFO for less detail
+
+
+def asymmetric_gaussian(x, mu=0, sigma_left=0.5, sigma_right=2.0):
+    return np.where(
+        x < mu,
+        np.exp(-0.5 * ((x - mu) / sigma_left) ** 2),
+        np.exp(-0.5 * ((x - mu) / sigma_right) ** 2)
+    )
+# x = np.linspace(0,14)
+# y= asymmetric_gaussian(x, mu=6, sigma_left=0.1, sigma_right=6.0)
+# plt.plot(x,y)
+# plt.show()
+class ExponentialAverager:
+    def __init__(self, alpha=0.1):
+        """
+        alpha: smoothing factor, 0 < alpha <= 1
+               higher alpha = more weight to new data
+        """
+        self.alpha = alpha
+        self.avg = None  # Will hold the current average
+
+    def reset(self):
+        self.avg = None  # Will hold the current average
+
+    def update(self, new_frame: np.ndarray):
+        """
+        Update the moving average with a new frame.
+        Returns the updated average.
+        """
+        if self.avg is None:
+            self.avg = new_frame.astype(np.float32)  # Initialize with first frame
+        else:
+            self.avg = self.alpha * new_frame + (1 - self.alpha) * self.avg
+        return self.avg
+
+
+class StepTOFController:
+    def  __init__(self, n_steps=14, step_start_position=.500, step_stop_position=4.3):
+        self.n_steps=n_steps
+        self.step_start_position = step_start_position
+        self.step_stop_position = step_stop_position
+        self.sigma_infront = 0.1
+        self.sigma_behind = 4.0
+        self.smoothing = ExponentialAverager(ahlpha=0.1)
+        self.reset()
+    
+    def asymmetric_gaussian(self, step_position, direction="down"):
+        x = np.linspace(0, 14)
+        if direction == "down":
+            y = asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_infront, sigma_right=self.sigma_behind)
+        elif direction == "up":
+            y = asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_behind, sigma_right=self.sigma_infront)
+        return y
+    
+    def reset(self):
+        self.intensities = None
+        self.n_frames = 0
+        self.smoothing.reset()
+
+    def get_step_n_from_position(self, position_m):
+        step_n = self.n_steps * (position_m - self.step_start_position) / (self.step_stop_position - self.step_start_position)
+        return step_n
+   
+    def get_intensities(self, position_m, direction="down"):
+        step_position = self.get_step_n_from_position(position_m)
+        intensities_new = self.asymmetric_gaussian(step_position, direction=direction)
+        self.intensities = self.smoothing.update(intensities_new)
 
 class CinemaRoomController:
     def __init__(self, ip='192.168.1.191', universe_id=0, port=6454):
@@ -249,6 +248,7 @@ class CinemaRoomController:
         self.initial_levels = 30
         self.setup_delay = 0.2
         self.tof = tof()
+        self.step_controller = StepTOFController()
         
         self.lineardriver_controller_mappings = {
             "steps": {
@@ -350,7 +350,9 @@ class CinemaRoomController:
     async def detect_distance(self):
         while self._running:
             self.distance = self.tof.get_distance()  # ✅ now it's sync
+            self.step_intensities = self.step_controller.get_intensities(self.distance)
             print("ToF distance:", self.distance)
+            print("ToF distance:", self.step_intensities)
             await asyncio.sleep(0.01)
             # return distance
 
@@ -374,6 +376,7 @@ class CinemaRoomController:
         self.universe = self.node.add_universe(self.universe_id)
         self.stars = await self._setup_stars()
         self.linear_drive_dmx_controllers = await self._setup_linear_drive_dmx_controllers()
+        self.step_controller.reset()
 
     async def _setup_stars(self):
         star_controllers = {}
