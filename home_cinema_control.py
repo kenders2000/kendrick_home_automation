@@ -29,57 +29,75 @@ from utilities import ExponentialAverager, asymmetric_gaussian
 # plt.show()
 
 class StepTOFController:
-    def  __init__(self, n_steps=14, step_start_position=.500, step_stop_position=4.3):
-        self.n_steps=n_steps
-        self.step_start_position = step_start_position
-        self.step_stop_position = step_stop_position
-        self.sigma_infront = 0.1
-        self.sigma_behind = 4.0
-        self.smoothing = ExponentialAverager(alpha=0.1)
+    def __init__(self, n_steps=14, start_pos_m=0.5, stop_pos_m=4.3, sigma_front=0.1, sigma_back=4.0, smoothing_alpha=0.1):
+        """
+        Initialize a controller for smoothing ToF sensor readings into step intensities.
+
+        Args:
+            n_steps (int): Total number of steps.
+            start_pos_m (float): Distance (in meters) at bottom step.
+            stop_pos_m (float): Distance (in meters) at top step.
+            sigma_front (float): Gaussian spread in the movement direction.
+            sigma_back (float): Gaussian spread against the movement direction.
+            smoothing_alpha (float): Smoothing factor for exponential averager.
+        """
+        self.n_steps = n_steps
+        self.start_pos_m = start_pos_m
+        self.stop_pos_m = stop_pos_m
+        self.sigma_front = sigma_front
+        self.sigma_back = sigma_back
+        self.smoothing = ExponentialAverager(alpha=smoothing_alpha)
         self.reset()
-    
-    def asymmetric_gaussian(self, step_position, direction="down"):
-        x = np.arange(14)
-        if direction == "down":
-            y = asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_infront, sigma_right=self.sigma_behind)
-        elif direction == "up":
-            y = asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_behind, sigma_right=self.sigma_infront)
-        return y
-    
+
     def reset(self):
-        self.intensities = None
-        self.n_frames = 0
+        """Reset controller state."""
+        self.intensities = np.zeros(self.n_steps, dtype=int)
         self.smoothing.reset()
 
-    def get_step_n_from_position(self, position_m):
-        print(position_m,  self.n_steps, self.step_start_position, self.step_stop_position)
-        # if position_m is None:
-        #     return int(np.zeros(self.n_steps))
-        step_n = self.n_steps * (position_m - self.step_start_position) / (self.step_stop_position - self.step_start_position)
-        return step_n
-   
-    def get_intensities(self, position_m, direction="down"):
-        # if position_m is None:
-        #     return np.zeros(self.n_steps)
-        step_position = self.get_step_n_from_position(position_m)
-        intensities_new = (self.asymmetric_gaussian(step_position, direction=direction) * 255).astype(int)
-        print("intensity pre smoothed", intensities_new)
-        self.intensities = self.smoothing.update(intensities_new).astype(int)
-        print("intensity smoothed", self.intensities)
-        if self.intensities is not None:
-            return self.intensities
+    def get_step_position(self, distance_m):
+        """Convert physical distance to step index (can be fractional)."""
+        span = self.stop_pos_m - self.start_pos_m
+        step_position = self.n_steps * (distance_m - self.start_pos_m) / span
+        return np.clip(step_position, 0, self.n_steps - 1)
+
+    def asymmetric_gaussian_profile(self, step_position, direction="down"):
+        """Return an asymmetric Gaussian profile centered at the given step index."""
+        x = np.arange(self.n_steps)
+        if direction == "down":
+            return asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_front, sigma_right=self.sigma_back)
+        elif direction == "up":
+            return asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_back, sigma_right=self.sigma_front)
         else:
-            return np.zeros(self.n_steps)
+            raise ValueError(f"Invalid direction '{direction}', expected 'up' or 'down'.")
+
+    def get_intensities(self, distance_m, direction="down"):
+        """
+        Calculate smoothed step intensities based on current distance measurement.
+
+        Args:
+            distance_m (float): Measured distance in meters.
+            direction (str): Movement direction, 'up' or 'down'.
+
+        Returns:
+            np.ndarray: Smoothed intensity array of shape (n_steps,).
+        """
+        if distance_m is None:
+            return np.zeros(self.n_steps, dtype=int)
+
+        step_pos = self.get_step_position(distance_m)
+        raw_intensities = (self.asymmetric_gaussian_profile(step_pos, direction) * 255).astype(int)
+        smoothed = self.smoothing.update(raw_intensities).astype(int)
+        self.intensities = smoothed
+
+        return self.intensities
+
 
 class CinemaRoomController:
     def __init__(self, ip='192.168.1.191', universe_id=0, port=6454, system="mac"):
-        self.distance = 0.0
         self.ip = ip
         self.port = port
         self.global_fade = 500
         self.universe_id = universe_id
-        self.step_channels = list(range(3, 17))
-        self.initial_levels = 30
         self.setup_delay = 1.0
         self.system = system
         if system == "pi":
@@ -189,9 +207,9 @@ class CinemaRoomController:
     async def detect_distance(self):
         while self._running:
 
-            self.distance = self.tof.get_distance()  # ✅ now it's sync
-            print("ToF distance:", self.distance)
-            self.step_intensities = self.step_controller.get_intensities(self.distance)
+            distance = self.tof.get_distance()  # ✅ now it's sync
+            print("ToF distance:", distance)
+            self.step_intensities = self.step_controller.get_intensities(distance)
             print("Step intensities:", self.step_intensities)
             self.step_layers["sensor"] = self.step_intensities
             await asyncio.sleep(0.01)
