@@ -23,3 +23,10 @@ class ExponentialAverager:
             self.avg = self.alpha * new_frame + (1 - self.alpha) * self.avg
         return self.avg
 
+
+def asymmetric_gaussian(x, mu=0, sigma_left=0.5, sigma_right=2.0):
+    return np.where(
+        x < mu,
+        np.exp(-0.5 * ((x - mu) / sigma_left) ** 2),
+        np.exp(-0.5 * ((x - mu) / sigma_right) ** 2)
+    )
