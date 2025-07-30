@@ -162,8 +162,8 @@ class CinemaRoomController:
         )
  
 
-        self.ambient_step_intensity_max = 100
-        self.ambient_step_intensity_min = 10
+        self.ambient_step_intensity_max = 20
+        self.ambient_step_intensity_min = 1
         self.ambient_step_delay_max = 5
         self.steps_intensity_sequences, self.steps_delay_sequences = self.get_rand_sequences(
             intensity_min=self.ambient_step_intensity_min, 
