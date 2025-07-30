@@ -86,7 +86,7 @@ class StepTOFController:
 
         step_pos = self.get_step_position(distance_m)
         raw_intensities = (self.asymmetric_gaussian_profile(step_pos, direction) * 255).astype(int)
-        smoothed = self.smoothing.update(raw_intensities).astype(int)
+        # smoothed = self.smoothing.update(raw_intensities).astype(int)
         self.intensities = smoothed
 
         return self.intensities
