@@ -47,14 +47,13 @@ class StepTOFController:
         self.sigma_front = sigma_front
         self.sigma_back = sigma_back
         self.smoothing = ExponentialAverager(alpha=smoothing_alpha)
-        self.reset()
         self.reset_time = 5.0 
         self.steps_position_threshold = 2.0
         self.steps_max_position_threshold = 4.5
         self.distance_outlier_threshold = 3.0
         self.top_of_steps_initial_position = 1.0
         self.bottom_of_steps_initial_position = 4.1
-
+        self.reset()
     def initialise_kalman_filter(self, distance):
         self.kalman_filter = KalmanFilter1D(
             initial_state=distance,
