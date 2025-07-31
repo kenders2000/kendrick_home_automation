@@ -73,9 +73,9 @@ class StepTOFController:
         return self.smoothed_distance
 
     def update_steps_state(self, distance, time):
-        if self.steps_person_state == "top" and self.countdown_no_person_state < self.reset_time:
+        if self.steps_person_state == "top" and self.countdown_no_person_state < self.reset_time and distance < self.steps_max_position_threshold:
             self.countdown_no_person_state += time
-        elif self.steps_person_state == "bottom" and self.countdown_no_person_state < self.reset_time:
+        elif self.steps_person_state == "bottom" and self.countdown_no_person_state < self.reset_time and distance < self.steps_max_position_threshold:
             self.countdown_no_person_state += time
         else:
             # if the timer has expired, reset the counter and reset the steps state to no persons detected
