@@ -16,7 +16,7 @@ from pyartnet import ArtNetNode
 # Local Module Imports
 sys.path.append("..")  # Add parent directory for module imports
 from tof import tof
-from utilities import ExponentialAverager, asymmetric_gaussian
+from utilities import ExponentialAverager, asymmetric_gaussian, KalmanFilter1D
 
 # Optional GUI/Plotting Imports (commented for headless systems)
 # from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QPushButton
@@ -48,11 +48,62 @@ class StepTOFController:
         self.sigma_back = sigma_back
         self.smoothing = ExponentialAverager(alpha=smoothing_alpha)
         self.reset()
+        self.reset_time = 5.0 
+        self.steps_position_threshold = 2.0
+        self.steps_max_position_threshold = 4.5
+        self.distance_outlier_threshold = 3.0
+        self.top_of_steps_initial_position = 1.0
+        self.bottom_of_steps_initial_position = 4.1
+
+    def initialise_kalman_filter(self, distance):
+        self.kalman_filter = KalmanFilter1D(
+            initial_state=distance,
+            initial_uncertainty=1.0,
+            process_variance=0.1,
+            measurement_variance=1.0,
+            outlier_threshold=self.distance_outlier_threshold
+        )
+
+    def update_distance(self, new_distance, time_since_last_update):
+        self.distance = new_distance
+        self.update_steps_state(new_distance, time_since_last_update)
+    
+    def get_smoothed_distance(self):
+        self.kalman_filter.predict()
+        self.smoothed_distance = self.kalman_filter.update(self.distance)
+        return self.smoothed_distance
+
+    def update_steps_state(self, distance, time):
+        if self.steps_person_state == "top" and self.countdown_no_person_state < self.reset_time:
+            self.countdown_no_person_state += time
+        elif self.steps_person_state == "bottom" and self.countdown_no_person_state < self.reset_time:
+            self.countdown_no_person_state += time
+        else:
+            # if the timer has expired, reset the counter and reset the steps state to no persons detected
+            self.countdown_no_person_state = 0.0
+            self.steps_person_state = "no_person"
+            self.initialise_kalman_filter(0.0)
+
+        if distance < self.steps_position_threshold and self.steps_person_state == "no_person":
+            self.steps_person_state = "top" # top or bottom
+            self.countdown_no_person_state = self.top_of_steps_initial_position
+            self.initialise_kalman_filter(distance)
+
+        elif distance > self.steps_position_threshold and distance > self.steps_max_position_threshold and self.steps_person_state == "no_person":
+            self.steps_person_state = "bottom" # top or bottom
+            self.countdown_no_person_state = self.bottom_of_steps_initial_position
+            self.initialise_kalman_filter(distance)
+
+        print(f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}")
+
 
     def reset(self):
         """Reset controller state."""
         self.intensities = np.zeros(self.n_steps, dtype=int)
         self.smoothing.reset()
+        self.steps_person_state = "no_person" # top or bottom
+        self.countdown_no_person_state = 0.0
+        self.initialise_kalman_filter(0.0)
 
     def get_step_position(self, distance_m):
         """Convert physical distance to step index (can be fractional)."""
@@ -183,7 +234,9 @@ class CinemaRoomController:
             sequence_length=100, 
             n_sequences=1
         )     
-                
+    
+
+
     def set_ambient_multiplier(self, ambient_multiplier):
         self.ambient_multiplier = ambient_multiplier
 
@@ -206,14 +259,16 @@ class CinemaRoomController:
 
     async def detect_distance(self):
         while self._running:
-
-            distance = self.tof.get_distance()  # ✅ now it's sync
+            distance = self.tof.get_distance()
             print("ToF distance:", distance)
-            self.step_intensities = self.step_controller.get_intensities(distance)
+
+            self.step_controller.update_distance(distance, 0.01)
+            smoothed_distance = self.step_controller.get_smoothed_distance()
+            self.step_intensities = self.step_controller.get_intensities(smoothed_distance)
             print("Step intensities:", self.step_intensities)
             self.step_layers["sensor"] = self.step_intensities
+            
             await asyncio.sleep(0.01)
-            # return distance
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
@@ -388,7 +443,6 @@ class CinemaRoomController:
             self.pulse_star_intensities(),
             self.update_dmx(),
         ]
-
         if self.system == "pi":
             tasks.append(self.detect_distance())
 
