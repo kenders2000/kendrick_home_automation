@@ -263,7 +263,7 @@ class CinemaRoomController:
             self.step_controller.update_distance(distance, 0.01)
             smoothed_distance = self.step_controller.get_smoothed_distance()
             self.step_intensities = self.step_controller.get_intensities(smoothed_distance)
-            print("ToF distance:", distance, "smoothed_distance", smoothed_distance)
+            print("ToF distance:", distance, "smoothed_distance", smoothed_distance, self.step_controller.steps_person_state)
             print("Step intensities:", self.step_intensities)
             self.step_layers["sensor"] = self.step_intensities
             
