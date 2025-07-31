@@ -170,4 +170,3 @@ class tof:
         except Exception as e:
             print("[ERROR] Failed to get ToF distance:", e)
             return self.distance        
-   
