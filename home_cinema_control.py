@@ -12,11 +12,24 @@ import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pyartnet import ArtNetNode
+import sys
+from PySide6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QVBoxLayout,
+    QSlider,
+    QLabel,
+    QPushButton,
+    QDoubleSpinBox,
+)
+from PySide6.QtCore import Qt, QTimer
+
 
 # Local Module Imports
 sys.path.append("..")  # Add parent directory for module imports
 from tof import tof
 from utilities import ExponentialAverager, asymmetric_gaussian, KalmanFilter1D
+
 
 # Optional GUI/Plotting Imports (commented for headless systems)
 # from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QPushButton
@@ -27,55 +40,111 @@ from utilities import ExponentialAverager, asymmetric_gaussian, KalmanFilter1D
 # y= asymmetric_gaussian(x, mu=6, sigma_left=0.1, sigma_right=6.0)
 # plt.plot(x,y)
 # plt.show()
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
 
 class StepTOFController:
-    def __init__(self, n_steps=14, start_pos_m=0.5, stop_pos_m=4.3, sigma_front=0.1, sigma_back=4.0, smoothing_alpha=0.1):
+    def __init__(
+        self,
+        n_steps=14,
+        step_top_position_m=0.5,
+        step_bottom_position_m=5.5,
+        step_sigma_front=0.5,
+        step_sigma_back=10.0,
+        step_intensity_smoothing_alpha=0.0,
+        step_reset_time=10.0,
+        steps_mid_position_threshold=2.0,
+        steps_max_position_threshold=5.5,
+        steps_min_position_threshold=1.0,
+        distance_outlier_threshold=3.0,
+        steps_top_initial_pos_for_kalman=1.0,
+        steps_bottom_initial_pos_for_kalman=5.6,
+        frame_time=0.1,
+    ):
         """
         Initialize a controller for smoothing ToF sensor readings into step intensities.
 
         Args:
             n_steps (int): Total number of steps.
-            start_pos_m (float): Distance (in meters) at bottom step.
-            stop_pos_m (float): Distance (in meters) at top step.
-            sigma_front (float): Gaussian spread in the movement direction.
-            sigma_back (float): Gaussian spread against the movement direction.
-            smoothing_alpha (float): Smoothing factor for exponential averager.
+            step_top_position_m (float): Distance (in meters) at bottom step.
+            step_bottom_position_m (float): Distance (in meters) at top step.
+            step_sigma_front (float): Gaussian spread in the movement direction.
+            step_sigma_back (float): Gaussian spread against the movement direction.
+            step_intensity_smoothing_alpha (float): Smoothing factor for exponential averager.
+            step_reset_time (float): Time in seconds to reset the step state if no person is detected.
+            steps_mid_position_threshold (float): Distance threshold for mid-step position.
+            steps_max_position_threshold (float): Distance threshold for maximum step position.
+            steps_min_position_threshold (float): Distance threshold for minimum step position.
+            distance_outlier_threshold (float): Threshold for distance outlier detection.
+            steps_top_initial_pos_for_kalman (float): Initial position for top of steps.
+            steps_bottom_initial_pos_for_kalman (float): Initial position for bottom of steps.
         """
         self.n_steps = n_steps
-        self.start_pos_m = start_pos_m
-        self.stop_pos_m = stop_pos_m
-        self.sigma_front = sigma_front
-        self.sigma_back = sigma_back
-        self.smoothing = ExponentialAverager(alpha=smoothing_alpha)
-        self.reset_time = 5.0 
-        self.steps_position_threshold = 2.0
-        self.steps_max_position_threshold = 4.5
-        self.distance_outlier_threshold = 3.0
-        self.top_of_steps_initial_position = 1.0
-        self.bottom_of_steps_initial_position = 4.1
+        self.step_top_position_m = step_top_position_m
+        self.step_bottom_position_m = step_bottom_position_m
+        self.step_sigma_front = step_sigma_front
+        self.step_sigma_back = step_sigma_back
+        self.step_intensity_smoothing_alpha = step_intensity_smoothing_alpha
+        self.exp_smoother = ExponentialAverager(alpha=step_intensity_smoothing_alpha)
+        self.step_reset_time = step_reset_time
+        self.steps_mid_position_threshold = steps_mid_position_threshold
+        self.steps_max_position_threshold = steps_max_position_threshold
+        self.steps_min_position_threshold = steps_min_position_threshold
+        self.distance_outlier_threshold = distance_outlier_threshold
+        self.steps_top_initial_pos_for_kalman = steps_top_initial_pos_for_kalman
+        self.steps_bottom_initial_pos_for_kalman = steps_bottom_initial_pos_for_kalman
+        self.frame_time = frame_time
         self.reset()
-    def initialise_kalman_filter(self, distance):
+
+    def initialise_kalman_filter(self, distance, max_speed = 1,):
+        """Initialize the Kalman filter with the given distance.
+
+        measurement_variance: The expected noise in your measurements (from the ToF sensor).
+        - Lower value → more trust in the current measurement → faster tracking
+        - Higher value → more trust in prediction → slower response
+        - Decrease this to speed up the filter's response — but not too low, or you'll overreact to noisy spikes.
+        process_variance: Your belief about how much the true distance can change between steps (i.e., system noise or model uncertainty).
+        - Higher value → Kalman filter expects more change → faster adaptation
+        - Lower value → assumes distance doesn’t change much → smoother but slower response
+        - Increase this slightly to allow faster tracking of changes in distance.
+        """
+        # the max expected distance in a frame is the maximum speed multiplied by the frame time
+        max_expected_distance_in_a_frame = max_speed * self.frame_time
+
         self.kalman_filter = KalmanFilter1D(
             initial_state=distance,
             initial_uncertainty=1.0,
-            process_variance=0.1,
-            measurement_variance=1.0,
-            outlier_threshold=self.distance_outlier_threshold
+            process_variance=max_expected_distance_in_a_frame,
+            measurement_variance=0.2,
+            outlier_threshold=self.distance_outlier_threshold,
         )
 
     def update_distance(self, new_distance, time_since_last_update):
         self.distance = new_distance
         self.update_steps_state(new_distance, time_since_last_update)
-    
+
     def get_smoothed_distance(self):
         self.kalman_filter.predict()
         self.smoothed_distance = self.kalman_filter.update(self.distance)
         return self.smoothed_distance
 
     def update_steps_state(self, distance, time):
-        if self.steps_person_state == "top" and self.countdown_no_person_state < self.reset_time and distance < self.steps_max_position_threshold:
+        if (
+            self.steps_person_state == "down"
+            and self.countdown_no_person_state < self.step_reset_time
+            and distance < self.steps_max_position_threshold
+        ):
             self.countdown_no_person_state += time
-        elif self.steps_person_state == "bottom" and self.countdown_no_person_state < self.reset_time and distance < self.steps_max_position_threshold:
+        elif (
+            self.steps_person_state == "up"
+            and self.countdown_no_person_state < self.step_reset_time
+            and distance < self.steps_max_position_threshold
+        ):
+            self.countdown_no_person_state += time
+        elif self.countdown_no_person_state < self.step_reset_time:
+            # if the timer has not expired, increment the counter
             self.countdown_no_person_state += time
         else:
             # if the timer has expired, reset the counter and reset the steps state to no persons detected
@@ -83,44 +152,64 @@ class StepTOFController:
             self.steps_person_state = "no_person"
             self.initialise_kalman_filter(0.0)
 
-        if distance < self.steps_position_threshold and self.steps_person_state == "no_person":
-            self.steps_person_state = "top" # top or bottom
-            self.countdown_no_person_state = self.top_of_steps_initial_position
+        if (
+            distance > self.steps_min_position_threshold
+            and distance < self.steps_mid_position_threshold
+            and self.steps_person_state == "no_person"
+        ):
+            self.steps_person_state = "down"  # top or bottom
+            self.countdown_no_person_state = 0.0
             self.initialise_kalman_filter(distance)
 
-        elif distance > self.steps_position_threshold and distance > self.steps_max_position_threshold and self.steps_person_state == "no_person":
-            self.steps_person_state = "bottom" # top or bottom
-            self.countdown_no_person_state = self.bottom_of_steps_initial_position
+        elif (
+            distance > self.steps_mid_position_threshold
+            and distance < self.steps_max_position_threshold
+            and self.steps_person_state == "no_person"
+        ):
+            self.steps_person_state = "up"  # top or bottom
+            self.countdown_no_person_state = 0.0
             self.initialise_kalman_filter(distance)
-
-        print(f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}")
-
+        logging.info(
+            f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}"
+        )
 
     def reset(self):
         """Reset controller state."""
         self.intensities = np.zeros(self.n_steps, dtype=int)
-        self.smoothing.reset()
-        self.steps_person_state = "no_person" # top or bottom
+        self.exp_smoother.reset()
+        self.steps_person_state = "no_person"  # top or bottom
         self.countdown_no_person_state = 0.0
         self.initialise_kalman_filter(0.0)
 
     def get_step_position(self, distance_m):
         """Convert physical distance to step index (can be fractional)."""
-        span = self.stop_pos_m - self.start_pos_m
-        step_position = self.n_steps * (distance_m - self.start_pos_m) / span
+        span = self.step_bottom_position_m - self.step_top_position_m
+        step_position = self.n_steps * (distance_m - self.step_top_position_m) / span
         return np.clip(step_position, 0, self.n_steps - 1)
 
     def asymmetric_gaussian_profile(self, step_position, direction="down"):
         """Return an asymmetric Gaussian profile centered at the given step index."""
         x = np.arange(self.n_steps)
-        if direction == "down":
-            return asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_front, sigma_right=self.sigma_back)
-        elif direction == "up":
-            return asymmetric_gaussian(x, mu=step_position, sigma_left=self.sigma_back, sigma_right=self.sigma_front)
+        if direction == "up":
+            return asymmetric_gaussian(
+                x,
+                mu=step_position,
+                sigma_left=self.step_sigma_front,
+                sigma_right=self.step_sigma_back,
+            )
+        elif direction == "down":
+            return asymmetric_gaussian(
+                x,
+                mu=step_position,
+                sigma_left=self.step_sigma_back,
+                sigma_right=self.step_sigma_front,
+            )
         else:
-            raise ValueError(f"Invalid direction '{direction}', expected 'up' or 'down'.")
+            raise ValueError(
+                f"Invalid direction '{direction}', expected 'up' or 'down'."
+            )
 
-    def get_intensities(self, distance_m, direction="down"):
+    def get_intensities(self, distance_m):
         """
         Calculate smoothed step intensities based on current distance measurement.
 
@@ -135,64 +224,88 @@ class StepTOFController:
             return np.zeros(self.n_steps, dtype=int)
 
         step_pos = self.get_step_position(distance_m)
-        raw_intensities = (self.asymmetric_gaussian_profile(step_pos, direction) * 255).astype(int)
-        # smoothed = self.smoothing.update(raw_intensities).astype(int)
-        self.intensities = raw_intensities
+        if self.steps_person_state == "no_person":
+            return np.zeros(self.n_steps).astype(int)
+        self.intensities = (
+            self.asymmetric_gaussian_profile(
+                step_pos, direction=self.steps_person_state
+            )
+            * 255
+        ).astype(int)
+        if self.step_intensity_smoothing_alpha > 0.0:
+            self.intensities = self.exp_smoother.update(self.intensities).astype(int)
 
         return self.intensities
 
 
 class CinemaRoomController:
-    def __init__(self, ip='192.168.1.191', universe_id=0, port=6454, system="mac"):
+    def __init__(
+        self,
+        ip="192.168.1.191",
+        universe_id=0,
+        port=6454,
+        system="mac",
+        global_fade=600,
+        star_intensity_fade=1000,
+        star_speed_fade=500,
+        setup_delay=0.1,
+        steps_wait_time=0.1,
+        controller_delay=0.1,
+    ):
         self.ip = ip
         self.port = port
-        self.global_fade = 500
+        self.global_fade = global_fade
+        self.star_intensity_fade = star_intensity_fade
+        self.star_speed_fade = star_speed_fade
         self.universe_id = universe_id
-        self.setup_delay = 1.0
+        self.setup_delay = setup_delay
+        self.steps_wait_time = steps_wait_time
+        self.controller_delay = controller_delay
         self.system = system
+        self.step_controller = StepTOFController(frame_time=self.steps_wait_time)
+
+
         if system == "pi":
             self.tof = tof()
-            self.step_controller = StepTOFController()
         elif system == "mac":
             self.tof = None
-            self.step_controller = None
-        
+
         self.lineardriver_controller_mappings = {
             "steps": {
-                "controller_n" : [0, 0, 0, 0, 1,1,1,1,2,2,2,2,3,3], 
-                "local_channel_n": [0,1,2,3,0,1,2,3,0,1,2,3,0,1],
+                "controller_n": [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+                "local_channel_n": [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1],
                 "dmx_channel": list(range(3, 17)),
-                },
+            },
             "panels": {
-                "controller_n" : [4,4,4,4, 5,5,5,5], 
-                "local_channel_n": [0,1,2,3,0,1,2,3],
+                "controller_n": [4, 4, 4, 4, 5, 5, 5, 5],
+                "local_channel_n": [0, 1, 2, 3, 0, 1, 2, 3],
                 "dmx_channel": [19, 20, 21, 22, 23, 24, 25, 26],
-                },
+            },
         }
 
-        self.stairs_ambiant_pulse = [True] * 14 # + [False] * 2
+        self.stairs_ambiant_pulse = [True] * 14  # + [False] * 2
         self.channels = {
             "steps": list(range(3, 18)),
             "stars_intensity": 1,
-            "stars_speed": 2,
+            "stars_position": 2,
             "panels": [19, 20, 21, 22, 23, 24],
         }
-        # Each layer stores intensity values for 
+        # Each layer stores intensity values for
         self.panel_layers = {
-            "ambient": [0,0,0,0,0,0],
-            "sensor": [0,0,0,0,0,0],
-            "manual": [0,0,0,0,0,0],
+            "ambient": [0, 0, 0, 0, 0, 0],
+            "sensor": [0, 0, 0, 0, 0, 0],
+            "manual": [0, 0, 0, 0, 0, 0],
         }
 
         self.step_layers = {
             "ambient": [0 for _ in range(14)],
-            "sensor":  [0 for _ in range(14)],
+            "sensor": [0 for _ in range(14)],
             "manual": [0 for _ in range(14)],
         }
         self.star_layers = {
-            "ambient": [255],
-            "sensor":  [0],
-            "manual": [0],
+            "ambient": [255, 255],
+            "sensor": [0, 0],
+            "manual": [0, 0],
         }
 
         self._running = True
@@ -202,53 +315,88 @@ class CinemaRoomController:
 
         self.ambient_panel_intensity_max = 210
         self.ambient_panel_intensity_min = 75
-        self.ambient_panel_delay_max = 3
-        self.panel_intensity_sequences, self.panel_delay_sequences = self.get_rand_sequences(
-            intensity_min=self.ambient_panel_intensity_min, 
-            intensity_max=self.ambient_panel_intensity_max, 
-            delay_max=self.ambient_panel_delay_max, 
-            sequence_length=100, 
-            n_sequences=self.n_panels
+        self.ambient_panel_delay_max = 10
+        self.panel_intensity_sequences, self.panel_delay_sequences = (
+            self.get_rand_sequences(
+                intensity_min=self.ambient_panel_intensity_min,
+                intensity_max=self.ambient_panel_intensity_max,
+                delay_max=self.ambient_panel_delay_max,
+                sequence_length=100,
+                n_sequences=self.n_panels,
+            )
         )
- 
 
-        self.ambient_step_intensity_max = 20
-        self.ambient_step_intensity_min = 1
+        self.ambient_step_intensity_max = 50
+        self.ambient_step_intensity_min = 5
         self.ambient_step_delay_max = 5
-        self.steps_intensity_sequences, self.steps_delay_sequences = self.get_rand_sequences(
-            intensity_min=self.ambient_step_intensity_min, 
-            intensity_max=self.ambient_step_intensity_max, 
-            delay_max=self.ambient_step_delay_max, 
-            sequence_length=100, 
-            n_sequences=self.n_steps
-        )     
+        self.steps_intensity_sequences, self.steps_delay_sequences = (
+            self.get_rand_sequences(
+                intensity_min=self.ambient_step_intensity_min,
+                intensity_max=self.ambient_step_intensity_max,
+                delay_max=self.ambient_step_delay_max,
+                sequence_length=100,
+                n_sequences=self.n_steps,
+            )
+        )
 
         self.ambient_star_intensity_max = 255
-        self.ambient_star_intensity_min = 0
+        self.ambient_star_intensity_min = 100
         self.ambient_star_delay_max = 5
-        self.stars_intensity_sequences, self.stars_delay_sequences = self.get_rand_sequences(
-            intensity_min=self.ambient_star_intensity_min, 
-            intensity_max=self.ambient_panel_intensity_max, 
-            delay_max=self.ambient_star_delay_max, 
-            sequence_length=100, 
-            n_sequences=1
-        )     
-    
+        self.stars_intensity_sequences, self.stars_delay_sequences = (
+            self.get_rand_sequences(
+                intensity_min=self.ambient_star_intensity_min,
+                intensity_max=self.ambient_panel_intensity_max,
+                delay_max=self.ambient_star_delay_max,
+                sequence_length=100,
+                n_sequences=1,
+            )
+        )
 
+        self.ambient_star_speed_max = 255
+        self.ambient_star_speed_min = 0
+        self.ambient_star_delay_max = 3
+        self.stars_position_sequences, self.stars_position_delay_sequences = (
+            self.get_rand_sequences(
+                intensity_min=self.ambient_star_intensity_min,
+                intensity_max=self.ambient_panel_intensity_max,
+                delay_max=self.ambient_star_delay_max,
+                sequence_length=100,
+                n_sequences=1,
+            )
+        )
+        self.manual_distance_override = None  # ← add this
+
+    def set_manual_distance(self, value):
+        print("set manual override", self.manual_distance_override)
+        self.manual_distance_override = float(value)
 
     def set_ambient_multiplier(self, ambient_multiplier):
         self.ambient_multiplier = ambient_multiplier
 
-    def get_rand_sequences(self, intensity_min=30, intensity_max=120, delay_max=3, sequence_length=100, n_sequences=1):
+    def get_rand_sequences(
+        self,
+        intensity_min=30,
+        intensity_max=120,
+        delay_max=3,
+        sequence_length=100,
+        n_sequences=1,
+    ):
         intensity_sequences = []
         delay_sequences = []
-        intensity_sequence = (intensity_min + (intensity_max - intensity_min) * np.random.random(sequence_length)).astype(int).tolist()
+        intensity_sequence = (
+            (
+                intensity_min
+                + (intensity_max - intensity_min) * np.random.random(sequence_length)
+            )
+            .astype(int)
+            .tolist()
+        )
         delay_sequence = (np.random.random(100) * delay_max).tolist()
         for panel_n in range(n_sequences):
             # Create a shuffled copy
             ambient_intensity_sequence_copy = intensity_sequence[:]
             random.shuffle(ambient_intensity_sequence_copy)
-            
+
             ambient_delay_sequence_copy = delay_sequence[:]
             random.shuffle(ambient_delay_sequence_copy)
 
@@ -258,37 +406,64 @@ class CinemaRoomController:
 
     async def detect_distance(self):
         while self._running:
-            distance = self.tof.get_distance()
+            print(self.manual_distance_override)
+            try:
+                if self.manual_distance_override is not None:
+                    self.distance = self.manual_distance_override
+                    self.step_controller.update_distance(
+                        self.distance, self.steps_wait_time
+                    )
+                    smoothed_distance = self.step_controller.get_smoothed_distance()
+                    self.step_intensities = self.step_controller.get_intensities(
+                        smoothed_distance
+                    )
 
-            self.step_controller.update_distance(distance, 0.01)
-            smoothed_distance = self.step_controller.get_smoothed_distance()
-            self.step_intensities = self.step_controller.get_intensities(smoothed_distance)
-            print("ToF distance:", distance, "smoothed_distance", smoothed_distance, self.step_controller.steps_person_state)
-            print("Step intensities:", self.step_intensities)
+                elif self.system == "pi":
+                    self.distance = self.tof.get_distance()
+                    self.step_controller.update_distance(
+                        self.distance, self.steps_wait_time
+                    )
+                    smoothed_distance = self.step_controller.get_smoothed_distance()
+                else:
+                    self.distance = 0.0
+                    smoothed_distance = self.distance
+                    self.step_intensities = np.zeros(self.n_steps)
+
+            except Exception as e:
+                logging.warning(f"ToF sensor error: {e}")
+
+            logging.info(
+                f"ToF distance: {self.distance}, Smoothed distance: {smoothed_distance} steps_person_state: {self.step_controller.steps_person_state}"
+            )
+            logging.info(f"Step intensities: {self.step_intensities}")
             self.step_layers["sensor"] = self.step_intensities
-            
-            await asyncio.sleep(0.01)
+
+            await asyncio.sleep(self.steps_wait_time)
 
     async def _setup_linear_drive_dmx_controllers(self):
         linear_drive_dmx_controllers = []
         start_channel = 3
         for controller_n in range(0, 6):
-            channel = self.universe.add_channel(start=start_channel + (controller_n * 4), width=4)
+            channel = self.universe.add_channel(
+                start=start_channel + (controller_n * 4), width=4
+            )
             channel.set_values([255, 255, 255, 255])  # White with dimmer
             await asyncio.sleep(self.setup_delay)
             channel.set_values([0, 0, 0, 0])  # White with dimmer
             await asyncio.sleep(self.setup_delay)
             linear_drive_dmx_controllers.append(channel)
         return linear_drive_dmx_controllers
-    
+
     async def setup(self):
         self.node = ArtNetNode(self.ip, port=self.port)
-        print(f"Connecting to {self.ip}")
-        print(f"Connected to {self.ip}")
-        print("Artnet node initialized.")
+        logging.info(f"Connecting to {self.ip}")
+        logging.info(f"Connected to {self.ip}")
+        logging.info("Artnet node initialized.")
         self.universe = self.node.add_universe(self.universe_id)
         self.stars = await self._setup_stars()
-        self.linear_drive_dmx_controllers = await self._setup_linear_drive_dmx_controllers()
+        self.linear_drive_dmx_controllers = (
+            await self._setup_linear_drive_dmx_controllers()
+        )
         if self.system == "pi":
             self.step_controller.reset()
 
@@ -298,7 +473,7 @@ class CinemaRoomController:
             start=self.channels["stars_intensity"], width=1
         )
         star_controllers["speed"] = self.universe.add_channel(
-            start=self.channels["stars_speed"], width=1
+            start=self.channels["stars_position"], width=1
         )
         star_controllers["intensity"].set_values([255])  # White with dimmer
         await asyncio.sleep(self.setup_delay)
@@ -314,39 +489,45 @@ class CinemaRoomController:
         while self._running:
             panel_intensities = self.mix_intensity_panels()
             step_intensities = self.mix_intensity_steps()
-            stars_intensity = self.mix_intensity_stars()
-            stars_speed = stars_intensity.copy()
+            stars_intensity, stars_position = self.mix_intensity_stars()
+            # stars_position = stars_intensity.copy()
 
-            # we have 6 linear_drive_dmx_controllers, each 4 channels
-            controller_intensities = np.zeros((6,4)).astype(int)
+            # we have 6 linear_drive_dmx_controllers, each 4 channels
+            controller_intensities = np.zeros((6, 4)).astype(int)
 
             # steps
             for controller_n, local_channel_n, step_intensity in zip(
-                self.lineardriver_controller_mappings["steps"]["controller_n"], 
+                self.lineardriver_controller_mappings["steps"]["controller_n"],
                 self.lineardriver_controller_mappings["steps"]["local_channel_n"],
-                step_intensities
-                ):
+                step_intensities,
+            ):
                 controller_intensities[controller_n, local_channel_n] = step_intensity
             # panels
             for controller_n, local_channel_n, panel_intensity in zip(
-                self.lineardriver_controller_mappings["panels"]["controller_n"], 
+                self.lineardriver_controller_mappings["panels"]["controller_n"],
                 self.lineardriver_controller_mappings["panels"]["local_channel_n"],
-                panel_intensities
-                ):
+                panel_intensities,
+            ):
                 controller_intensities[controller_n, local_channel_n] = panel_intensity
-
             # stars
-            self.stars["intensity"].add_fade(stars_intensity, self.global_fade)
-            self.stars["speed"].add_fade(stars_speed, self.global_fade)
+            self.stars["intensity"].add_fade(
+                [stars_intensity], self.star_intensity_fade
+            )
+            self.stars["speed"].add_fade([stars_position], self.star_speed_fade)
 
-            print("Step intensities:", step_intensities)
-            print("Panel intensities:", panel_intensities)
-            print("Star speed and intensity:", stars_intensity)
-
-            for controller_n, controller in enumerate(self.linear_drive_dmx_controllers):
-                controller.add_fade(controller_intensities[controller_n], self.global_fade)
-                await asyncio.sleep(0.01)  # <-- Needed to pulse and allow fading
-    
+            logging.info(f"Step intensities: {step_intensities}")
+            logging.info(f"Panel intensities: {panel_intensities}")
+            logging.info(f"Star intensity: {stars_intensity}")
+            logging.info(f"Star position: {stars_position}")
+            for controller_n, controller in enumerate(
+                self.linear_drive_dmx_controllers
+            ):
+                controller.add_fade(
+                    controller_intensities[controller_n], self.global_fade
+                )
+                await asyncio.sleep(
+                    self.controller_delay
+                )  # <-- Needed to pulse and allow fading
 
     def mix_intensity_panels(self):
         # Combine values from each layer (choose strategy):
@@ -354,24 +535,25 @@ class CinemaRoomController:
         intensities = []
         for panel_n in range(self.n_panels):
             layers = {
-                "ambient":self.panel_layers["ambient"][panel_n],
+                "ambient": self.panel_layers["ambient"][panel_n],
                 "sensor": self.panel_layers["sensor"][panel_n],
                 "manual": self.panel_layers["manual"][panel_n],
             }
-            intensities.append( int(max(layers.values()) * self.ambient_multiplier) )
+            intensities.append(int(max(layers.values()) * self.ambient_multiplier))
         return intensities
-    
+
     def mix_intensity_stars(self):
         # Combine values from each layer (choose strategy):
-
-        layers = {
-            "ambient":self.star_layers["ambient"][0],
-            "sensor": self.star_layers["sensor"][0],
-            "manual": self.star_layers["manual"][0],
-        }
-        intensities = [ int(max(layers.values()) * self.ambient_multiplier) ]
+        intensities = []
+        for n in range(len(self.star_layers["ambient"])):
+            layers = {
+                "ambient": self.star_layers["ambient"][n],
+                "sensor": self.star_layers["sensor"][n],
+                "manual": self.star_layers["manual"][n],
+            }
+            intensities.append(int(max(layers.values()) * self.ambient_multiplier))
         return intensities
-    
+
     def mix_intensity_steps(self):
         # Combine values from each layer (choose strategy):
         intensities = []
@@ -381,7 +563,7 @@ class CinemaRoomController:
                 "sensor": self.step_layers["sensor"][panel_n],
                 "manual": self.step_layers["manual"][panel_n],
             }
-            intensities.append( int(max(layers.values()) * self.ambient_multiplier) )
+            intensities.append(int(max(layers.values()) * self.ambient_multiplier))
         return intensities
 
         # strongest wins
@@ -397,10 +579,10 @@ class CinemaRoomController:
 
     async def pulse_star_intensities(self):
         tasks = [
-            asyncio.create_task(self.pulse_star())
+            asyncio.create_task(self.pulse_star()),
+            asyncio.create_task(self.move_star()),
         ]
         await asyncio.gather(*tasks)
-
 
     async def pulse_step_intensities(self):
         tasks = []
@@ -411,35 +593,54 @@ class CinemaRoomController:
 
     async def pulse_panel_intensity(self, panel_n=0):
         # pulse a signal panel
+        # Make shuffled copies each time
+        intensities = self.panel_intensity_sequences[panel_n]
+        delays = self.panel_delay_sequences[panel_n]
+        random.shuffle(intensities)
+        random.shuffle(delays)
         while self._running:
-            for intensity, delay in zip(self.panel_intensity_sequences[panel_n], self.panel_delay_sequences[panel_n]):
+            for intensity, delay in zip(intensities, delays):
                 self.panel_layers["ambient"][panel_n] = intensity
                 await asyncio.sleep(delay)
-                
 
     async def pulse_step_intensity(self, panel_n=0):
         # pulse a signal panel
+        intensities = self.steps_intensity_sequences[panel_n][:]
+        delays = self.steps_delay_sequences[panel_n][:]
+        random.shuffle(intensities)
+        random.shuffle(delays)
+
         while self._running:
-            for intensity, delay in zip(self.steps_intensity_sequences[panel_n], self.steps_delay_sequences[panel_n]):
+            for intensity, delay in zip(intensities, delays):
                 self.step_layers["ambient"][panel_n] = intensity
                 await asyncio.sleep(delay)
 
     async def pulse_star(self):
         # pulse a signal panel
         while self._running:
-            for intensity, delay in zip(self.stars_intensity_sequences[0], self.stars_delay_sequences[0]):
+            for intensity, delay in zip(
+                self.stars_intensity_sequences[0], self.stars_delay_sequences[0]
+            ):
                 self.star_layers["ambient"][0] = intensity
                 await asyncio.sleep(delay)
 
-                
+    async def move_star(self):
+        # pulse a signal panel
+        while self._running:
+            for intensity, delay in zip(
+                self.stars_position_sequences[0], self.stars_position_delay_sequences[0]
+            ):
+                self.star_layers["ambient"][1] = intensity
+                await asyncio.sleep(delay)
 
     async def run(self):
 
-        await self.setup()
+        # await self.setup()
         tasks = [
             self.pulse_panels_intensities(),
             self.pulse_step_intensities(),
             self.pulse_star_intensities(),
+            self.detect_distance(),
             self.update_dmx(),
         ]
         if self.system == "pi":
@@ -447,8 +648,10 @@ class CinemaRoomController:
 
         await asyncio.gather(*tasks)
 
+
 def start_asyncio_loop(controller):
     asyncio.run(controller.run())
+
 
 # Top level instance (used by uvicorn)
 app = FastAPI()
@@ -461,34 +664,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 system = os.getenv("SYSTEM")
-system = "pi "if system is None else system
+ip = os.getenv("IP")
 
+system = "pi " if system is None else system
+ip = "192.168.1.191" if ip is None else ip
+ip = "127.0.0.1"
 # Global controller instance
-controller = CinemaRoomController(system=system)
+controller = CinemaRoomController(system=system, ip=ip)
+
 
 @app.get("/ambient_multiplier/{value}")
 def set_ambient_multiplier(value: float):
     controller.set_ambient_multiplier(value)
-    print("Changing ambient leve", value)
+    logging.info(f"Changing ambient level: {value}")
     return {"status": "ok", "ambient_multiplier": value}
 
+
 @app.on_event("startup")
-def start_controller():
-    thread = threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True)
+async def start_controller():
+    await controller.setup()
+    thread = threading.Thread(
+        target=start_asyncio_loop, args=(controller,), daemon=True
+    )
     thread.start()
 
-if __name__ == "__main__":
-    pass
-    # Start asyncio loop in background thread
-    # threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True).start()
 
-    # app = QApplication(sys.argv)
-    # ui = LightingUI(controller)
-    # ui.show()
-    # sys.exit(app.exec())
+# if __name__ == "__main__":
+#     app = QApplication(sys.argv)
+#     window = DistanceTestUI(controller)
+#     window.show()
+#     sys.exit(app.exec())    # Start asyncio loop in background thread
+# threading.Thread(target=start_asyncio_loop, args=(controller,), daemon=True).start()
 
-    # try:
-    #     asyncio.run(controller.run())
-    # except KeyboardInterrupt:
-    #     print("Shutting down gracefully...")
+# app = QApplication(sys.argv)
+# ui = LightingUI(controller)
+# ui.show()
+# sys.exit(app.exec())
 
+# try:
+#     asyncio.run(controller.run())
+# except KeyboardInterrupt:
+#     logging.info("Shutting down gracefully...")
