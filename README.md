@@ -29,4 +29,12 @@ source env/bin/activate
 pip install numpy --prefer-binary
 pip install pyserial pyartnet fastapi uvicorn
 sudo apt install libopenblas0
+
+
+npx create-react-app cinema-controller-ui
+cd cinema-controller-ui
+npm start
+
 ```
+
+

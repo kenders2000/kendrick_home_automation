@@ -928,7 +928,7 @@ ip = os.getenv("IP")
 
 system = "mac" if system is None else system
 ip = "192.168.1.191" if ip is None else ip
-ip = "127.0.0.1"
+# ip = "127.0.0.1"
 # Global controller instance
 try:
     settings = load_settings_from_file("settings.json")
