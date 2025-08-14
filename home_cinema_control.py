@@ -29,7 +29,7 @@ import sys
 # Local Module Imports
 sys.path.append("..")  # Add parent directory for module imports
 from tof import tof
-from utilities import ExponentialAverager, asymmetric_gaussian, KalmanFilter1D
+from utilities import ExponentialAverager, asymmetric_gaussian, KalmanFilter1D, KalmanFilter1D_CV
 
 
 # Optional GUI/Plotting Imports (commented for headless systems)
@@ -52,6 +52,63 @@ from typing import Optional
 
 import json
 from pathlib import Path
+import csv
+import io
+from datetime import datetime
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse, FileResponse
+
+# Headless plotting on Raspberry Pi
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from collections import deque
+from threading import Lock
+from dash import Dash, dcc, html, Output, Input
+import plotly.graph_objects as go
+from starlette.middleware.wsgi import WSGIMiddleware
+from datetime import datetime
+
+STATE_MAP = {"no_person": 0, "down": 1, "up": 2}
+
+
+class DataLogger:
+    """
+    Thread-safe, lightweight logger for streaming numeric time series.
+    Keeps a ring buffer in memory and can also append to CSV.
+    """
+    def __init__(self, maxlen=6000, csv_path=None):
+        self.lock = threading.Lock()
+        self.buffer = deque(maxlen=maxlen)  # items: (ts, tof, smooth, state)
+        self.csv_path = Path(csv_path) if csv_path else None
+        if self.csv_path:
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.csv_path.exists():
+                with self.csv_path.open("w", newline="") as f:
+                    csv.writer(f).writerow(["ts", "tof", "smooth", "state"])
+
+    def log(self, ts: float, tof: float, smooth: float, state: str):
+        with self.lock:
+            self.buffer.append(
+                (ts, float(tof), float(smooth), state))
+            if self.csv_path:
+                # open per-write for simplicity & robustness on the Pi
+                with self.csv_path.open("a", newline="") as f:
+                    csv.writer(f).writerow([ts, tof, smooth, state])
+
+    def snapshot(self):
+        """Return numpy/plot-friendly lists (ts, tof, smooth, state)."""
+        with self.lock:
+            if not self.buffer:
+                return [], [], [], []
+            ts, tof, smooth, state = zip(*self.buffer)
+            return list(ts), list(tof), list(smooth), list(state)
+
+    def clear(self):
+        with self.lock:
+            self.buffer.clear()
+
+
 
 class SaveSettingsRequest(BaseModel):
     filename: str = "settings.json"
@@ -61,7 +118,7 @@ class ControllerSettings(BaseModel):
     ip: str = "192.168.1.191"
     universe_id: int = 0
     port: int = 6454
-    system: str = "mac"
+    system: str = "pi"
 
     global_fade: int = 600
     star_intensity_fade: int = 1000
@@ -87,6 +144,30 @@ class ControllerSettings(BaseModel):
     ambient_star_speed_min: int = 0
 
     sequence_length: int = 100
+
+    n_steps: int = 14
+    n_panels: int = 6
+    tof_angle: float = 10
+    # this determines the distance to step num ber mapping
+    step_top_position_m: float = 0.7
+    step_bottom_position_m: float = 5.5
+    step_sigma_front: float = 0.5
+    step_sigma_back: float = 10.0
+    step_descending_ahead: float = 2.0
+    step_ascending_ahead: float = 1.0
+    step_intensity_smoothing_alpha: float = 0.0
+    step_reset_time: float = 10.0
+    steps_mid_position_threshold: float = 2.5
+    steps_max_position_threshold: float = 6.0
+    steps_min_position_threshold: float = 0.5
+    distance_outlier_threshold: float = 3.0
+    steps_top_initial_pos_for_kalman: float = 1.1
+    steps_bottom_initial_pos_for_kalman: float = 5.5
+    frame_time: float = 0.1
+    kalman_initial_uncertainty: float = 1.0
+    kalman_measurement_variance: float = 0.5
+    kalman_max_speed: float = 1.0
+    kalman_distance_outlier_threshold: float = 0.5
 
 
 def load_settings_from_file(path="settings.json") -> ControllerSettings:
@@ -121,18 +202,24 @@ class StepTOFController:
         self,
         n_steps=14,
         step_top_position_m=0.5,
-        step_bottom_position_m=5.5,
+        step_bottom_position_m=5.0,
         step_sigma_front=0.5,
         step_sigma_back=10.0,
+        step_descending_ahead=1.0,
+        step_ascending_ahead=1.0,
         step_intensity_smoothing_alpha=0.0,
         step_reset_time=10.0,
         steps_mid_position_threshold=2.0,
         steps_max_position_threshold=5.5,
-        steps_min_position_threshold=1.0,
+        steps_min_position_threshold=0.5,
         distance_outlier_threshold=3.0,
-        steps_top_initial_pos_for_kalman=1.0,
-        steps_bottom_initial_pos_for_kalman=5.6,
+        steps_top_initial_pos_for_kalman=0.5,
+        steps_bottom_initial_pos_for_kalman=5.0,
         frame_time=0.1,
+        kalman_initial_uncertainty=1.0,
+        kalman_measurement_variance=0.1,
+        kalman_max_speed=1.0,
+        kalman_distance_outlier_threshold=0.5,
     ):
         """
         Initialize a controller for smoothing ToF sensor readings into step intensities.
@@ -157,6 +244,8 @@ class StepTOFController:
         self.step_bottom_position_m = step_bottom_position_m
         self.step_sigma_front = step_sigma_front
         self.step_sigma_back = step_sigma_back
+        self.step_descending_ahead = step_descending_ahead
+        self.step_ascending_ahead = step_ascending_ahead
         self.step_intensity_smoothing_alpha = step_intensity_smoothing_alpha
         self.exp_smoother = ExponentialAverager(alpha=step_intensity_smoothing_alpha)
         self.step_reset_time = step_reset_time
@@ -167,12 +256,20 @@ class StepTOFController:
         self.steps_top_initial_pos_for_kalman = steps_top_initial_pos_for_kalman
         self.steps_bottom_initial_pos_for_kalman = steps_bottom_initial_pos_for_kalman
         self.frame_time = frame_time
+        self.kalman_initial_uncertainty = kalman_initial_uncertainty
+        self.kalman_measurement_variance = kalman_measurement_variance
+        self.kalman_max_speed = kalman_max_speed
+        self.kalman_distance_outlier_threshold = kalman_distance_outlier_threshold
+        self.distance = 0.0
+        self.estimated_velocity = 0.0
+        self.prev_raw_distance = None
+        print("parameters", self.steps_min_position_threshold, self.steps_mid_position_threshold, self.steps_max_position_threshold)
         self.reset()
 
     def initialise_kalman_filter(
         self,
         distance,
-        max_speed=1,
+        direction="down"
     ):
         """Initialize the Kalman filter with the given distance.
 
@@ -186,64 +283,84 @@ class StepTOFController:
         - Increase this slightly to allow faster tracking of changes in distance.
         """
         # the max expected distance in a frame is the maximum speed multiplied by the frame time
-        max_expected_distance_in_a_frame = max_speed * self.frame_time
+        max_expected_distance_in_a_frame = self.kalman_max_speed * self.frame_time
+        if direction == "down":
+            v0 = 0.1
+        else:
+            v0 = -0.1
 
-        self.kalman_filter = KalmanFilter1D(
-            initial_state=distance,
-            initial_uncertainty=1.0,
-            process_variance=max_expected_distance_in_a_frame,
-            measurement_variance=0.2,
-            outlier_threshold=self.distance_outlier_threshold,
+        self.distance = distance
+        self.kalman_filter = KalmanFilter1D_CV(
+            x0=self.distance, 
+            v0=v0,
+            P0=(1.0, 1.0),
+            q=0.5,              # try 0.2–2.0
+            r=self.kalman_measurement_variance,
+            outlier_threshold=self.kalman_distance_outlier_threshold,
+            vel_clip=self.kalman_max_speed
         )
 
-    def update_distance(self, new_distance, time_since_last_update):
-        self.distance = new_distance
-        self.update_steps_state(new_distance, time_since_last_update)
+    def update_distance(self, tof_distance, smoothed_distance, time_since_last_update):
+        # In StepTOFController.update_distance(...)
+        # Compute instantaneous velocity from raw ToF
+        if self.prev_raw_distance is not None and time_since_last_update > 0:
+            v = (tof_distance - self.prev_raw_distance) / time_since_last_update
+            # Limit how fast we believe it can change
+            vmax = float(self.kalman_max_speed)
+            self.estimated_velocity = float(np.clip(v, -vmax, vmax))
+        self.prev_raw_distance = tof_distance
 
-    def get_smoothed_distance(self):
-        self.kalman_filter.predict()
-        self.smoothed_distance = self.kalman_filter.update(self.distance)
+        # Keep your existing assignments
+        self.distance = tof_distance
+        self.update_steps_state(tof_distance, smoothed_distance, time_since_last_update)
+        # self.distance = tof_distance
+        # self.update_steps_state(tof_distance, smoothed_distance, time_since_last_update)
+
+    def get_smoothed_distance(self, run_smoothing=True):
+        # self.kalman_filter.predict()
+        # self.smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
+        # return self.smoothed_distance
+        # self.kalman_filter.predict(expected_velocity=self.estimated_velocity, dt=self.frame_time)
+        # self.smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
+        # each frame (dt = self.frame_time):
+        pred_pos = self.kalman_filter.predict(dt=self.frame_time)    # coast
+        smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
+        self.smoothed_distance, vel = self.kalman_filter.get_state()
         return self.smoothed_distance
 
-    def update_steps_state(self, distance, time):
-        if (
-            self.steps_person_state == "down"
-            and self.countdown_no_person_state < self.step_reset_time
-            and distance < self.steps_max_position_threshold
-        ):
+    def update_steps_state(self, tof_distance, smoothed_distance, time):
+
+        if self.countdown_no_person_state < self.step_reset_time and self.steps_person_state in ["down", "up"]:
+            # if the timer has not expired, and we are in an action state, increment the counter, and ensre we keep the 
+            # same state until the timer runs out
             self.countdown_no_person_state += time
         elif (
-            self.steps_person_state == "up"
-            and self.countdown_no_person_state < self.step_reset_time
-            and distance < self.steps_max_position_threshold
+            tof_distance > self.steps_min_position_threshold
+            and tof_distance < self.steps_mid_position_threshold
+            and self.steps_person_state == "no_person"
         ):
-            self.countdown_no_person_state += time
-        elif self.countdown_no_person_state < self.step_reset_time:
-            # if the timer has not expired, increment the counter
-            self.countdown_no_person_state += time
+            print("Detected person at top of steps", tof_distance)
+            # if we are in a no_person state and the distance is detected as being on the bottom half of the steps,
+            # we assume a person is detected at the bottom of the steps about to asecend
+            self.steps_person_state = "down"  # top or bottom
+            self.countdown_no_person_state = 0.0
+            self.initialise_kalman_filter(tof_distance, direction=self.steps_person_state)
+        elif (
+            tof_distance > self.steps_mid_position_threshold
+            and tof_distance < self.steps_max_position_threshold
+            and self.steps_person_state == "no_person"
+        ):
+            # if we are in a no_person state and the distance is detected as being on the top half of the steps,
+            # we assume a person is detected at the top of the steps about to descend
+            self.steps_person_state = "up"  # top or bottom
+            self.countdown_no_person_state = 0.0
+            self.initialise_kalman_filter(tof_distance, direction=self.steps_person_state)
         else:
             # if the timer has expired, reset the counter and reset the steps state to no persons detected
-            self.countdown_no_person_state = 0.0
+            self.countdown_no_person_state = self.step_reset_time
             self.steps_person_state = "no_person"
             self.initialise_kalman_filter(0.0)
 
-        if (
-            distance > self.steps_min_position_threshold
-            and distance < self.steps_mid_position_threshold
-            and self.steps_person_state == "no_person"
-        ):
-            self.steps_person_state = "down"  # top or bottom
-            self.countdown_no_person_state = 0.0
-            self.initialise_kalman_filter(distance)
-
-        elif (
-            distance > self.steps_mid_position_threshold
-            and distance < self.steps_max_position_threshold
-            and self.steps_person_state == "no_person"
-        ):
-            self.steps_person_state = "up"  # top or bottom
-            self.countdown_no_person_state = 0.0
-            self.initialise_kalman_filter(distance)
         logging.info(
             f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}"
         )
@@ -268,23 +385,23 @@ class StepTOFController:
         if direction == "up":
             return asymmetric_gaussian(
                 x,
-                mu=step_position,
-                sigma_left=self.step_sigma_front,
-                sigma_right=self.step_sigma_back,
+                mu=step_position + self.step_ascending_ahead,
+                sigma_left=self.step_sigma_back,
+                sigma_right=self.step_sigma_front,
             )
         elif direction == "down":
             return asymmetric_gaussian(
                 x,
-                mu=step_position,
-                sigma_left=self.step_sigma_back,
-                sigma_right=self.step_sigma_front,
+                mu=step_position - self.step_descending_ahead,
+                sigma_left=self.step_sigma_front,
+                sigma_right=self.step_sigma_back,
             )
         else:
             raise ValueError(
                 f"Invalid direction '{direction}', expected 'up' or 'down'."
             )
 
-    def get_intensities(self, distance_m):
+    def get_intensities(self, distance_m, steps_length=6):
         """
         Calculate smoothed step intensities based on current distance measurement.
 
@@ -297,7 +414,7 @@ class StepTOFController:
         """
         if distance_m is None:
             return np.zeros(self.n_steps, dtype=int)
-
+        distance_m = np.clip(steps_length - distance_m, 0, steps_length)
         step_pos = self.get_step_position(distance_m)
         if self.steps_person_state == "no_person":
             return np.zeros(self.n_steps).astype(int)
@@ -340,6 +457,30 @@ class CinemaRoomController:
         sequence_length=100,
         manual_distance_override=None,
         initialise=False,
+        enable_tof=True,
+        tof_angle=0.0,
+        # tof settings
+        n_steps=14,
+        n_panels = 6,
+        step_top_position_m=0.5,
+        step_bottom_position_m=5.0,
+        step_sigma_front=0.5,
+        step_sigma_back=10.0,
+        step_descending_ahead=1.0,
+        step_ascending_ahead=1.0,
+        step_intensity_smoothing_alpha=0.0,
+        step_reset_time=10.0,
+        steps_mid_position_threshold=2.0,
+        steps_max_position_threshold=5.5,
+        steps_min_position_threshold=1.0,
+        distance_outlier_threshold=3.0,
+        steps_top_initial_pos_for_kalman=0.5,
+        steps_bottom_initial_pos_for_kalman=5.0,
+        frame_time=0.1,
+        kalman_initial_uncertainty=1.0,
+        kalman_measurement_variance=0.5,
+        kalman_max_speed=1.0,
+        kalman_distance_outlier_threshold=0.5,
     ):
         """
         Initialise the cinema room controller.
@@ -381,10 +522,31 @@ class CinemaRoomController:
         self.steps_wait_time = steps_wait_time
         self.controller_delay = controller_delay
         self.system = system
-        self.step_controller = StepTOFController(frame_time=self.steps_wait_time)
+        self.step_controller = StepTOFController(
+            n_steps=n_steps,
+            step_top_position_m=step_top_position_m,
+            step_bottom_position_m=step_bottom_position_m,
+            step_sigma_front=step_sigma_front,
+            step_sigma_back=step_sigma_back,
+            step_descending_ahead=step_descending_ahead,
+            step_ascending_ahead=step_ascending_ahead,
+            step_intensity_smoothing_alpha=step_intensity_smoothing_alpha,
+            step_reset_time=step_reset_time,
+            steps_mid_position_threshold=steps_mid_position_threshold,
+            steps_max_position_threshold=steps_max_position_threshold,
+            steps_min_position_threshold=steps_min_position_threshold,
+            distance_outlier_threshold=distance_outlier_threshold,
+            steps_top_initial_pos_for_kalman=steps_top_initial_pos_for_kalman,
+            steps_bottom_initial_pos_for_kalman=steps_bottom_initial_pos_for_kalman,
+            frame_time=frame_time,
+            kalman_initial_uncertainty=kalman_initial_uncertainty,
+            kalman_measurement_variance=kalman_measurement_variance,
+            kalman_max_speed=kalman_max_speed,
+            kalman_distance_outlier_threshold=kalman_distance_outlier_threshold
+        )
         self._running = True
-        self.n_panels = 6
-        self.n_steps = 14
+        self.n_panels = n_panels
+        self.n_steps = n_steps
         # initialise the ambient multiplier at full intensity
         self.ambient_multiplier = 1.0
         self.ambient_panel_intensity_max = ambient_panel_intensity_max
@@ -400,10 +562,15 @@ class CinemaRoomController:
         self.ambient_star_speed_min = ambient_star_speed_min
         self.sequence_length = sequence_length
         self.manual_distance_override = manual_distance_override
-        if system == "pi":
-            self.tof = tof()
-        elif system == "mac":
-            self.tof = None
+        self.enable_tof = enable_tof
+        self.tof_angle = tof_angle
+        self.tof = tof(tof_angle)
+        self.distance = 0.0
+        # if system == "pi":
+        #     self.tof = tof()
+        #     # self.tof = None
+        # elif system == "mac":
+        #     self.tof = None
         if initialise:
             # initialise the dmx channels this sets the mapping for the DMX channels
             self.initialise_dmx_channels()
@@ -565,6 +732,31 @@ class CinemaRoomController:
         self.ambient_star_speed_max = settings.ambient_star_speed_max
         self.ambient_star_speed_min = settings.ambient_star_speed_min
 
+        self.sequence_length = settings.sequence_length
+
+        self.tof_angle = settings.tof_angle
+        # tof settings
+        self.n_steps = settings.n_steps
+        self.n_panels = settings.n_panels
+        self.step_top_position_m = settings.step_top_position_m
+        self.step_bottom_position_m = settings.step_bottom_position_m
+        self.step_sigma_front = settings.step_sigma_front
+        self.step_sigma_back = settings.step_sigma_back
+        self.step_intensity_smoothing_alpha = settings.step_intensity_smoothing_alpha
+        self.step_reset_time = settings.step_reset_time
+        self.steps_mid_position_threshold = settings.steps_mid_position_threshold
+        self.steps_max_position_threshold = settings.steps_max_position_threshold
+        self.steps_min_position_threshold = settings.steps_min_position_threshold
+        self.distance_outlier_threshold = settings.distance_outlier_threshold
+        self.steps_top_initial_pos_for_kalman = settings.steps_top_initial_pos_for_kalman
+        self.steps_bottom_initial_pos_for_kalman = settings.steps_bottom_initial_pos_for_kalman
+        self.frame_time = settings.frame_time
+        self.kalman_initial_uncertainty = settings.kalman_initial_uncertainty
+        self.kalman_measurement_variance = settings.kalman_measurement_variance
+        self.kalman_max_speed = settings.kalman_max_speed
+        self.kalman_distance_outlier_threshold = settings.kalman_distance_outlier_threshold
+
+
         # initialise the dmx channels this sets the mapping for the DMX channels
         self.initialise_dmx_channels()
         # Generate random intensity sequences for ambient lighting
@@ -651,26 +843,44 @@ class CinemaRoomController:
         """
         while self._running:
             try:
+                # dont use kalman filter when no person is detected
+                if self.step_controller.steps_person_state == "no_person":
+                    run_smoothing = True
+                    smoothed_distance = self.distance
+                else:
+                    run_smoothing = True
+
+                self.step_intensities = np.zeros(self.n_steps)
+                
+                # self.distance = 0.0
+
                 if self.manual_distance_override is not None:
                     self.distance = self.manual_distance_override
+                
                     self.step_controller.update_distance(
-                        self.distance, self.steps_wait_time
-                    )
-                    smoothed_distance = self.step_controller.get_smoothed_distance()
-                    self.step_intensities = self.step_controller.get_intensities(
-                        smoothed_distance
+                        self.distance,
+                        smoothed_distance,
+                        self.steps_wait_time
                     )
 
-                elif self.system == "pi":
+                    smoothed_distance = self.step_controller.get_smoothed_distance(run_smoothing=run_smoothing)
+
+
+                elif self.enable_tof:
                     self.distance = self.tof.get_distance()
+                    
                     self.step_controller.update_distance(
-                        self.distance, self.steps_wait_time
+                        self.distance, smoothed_distance, self.steps_wait_time
                     )
-                    smoothed_distance = self.step_controller.get_smoothed_distance()
+                    smoothed_distance = self.step_controller.get_smoothed_distance(run_smoothing=run_smoothing)
                 else:
                     self.distance = 0.0
                     smoothed_distance = self.distance
                     self.step_intensities = np.zeros(self.n_steps)
+
+                self.step_intensities = self.step_controller.get_intensities(
+                    smoothed_distance
+                )
 
             except Exception as e:
                 logging.warning(f"ToF sensor error: {e}")
@@ -681,6 +891,19 @@ class CinemaRoomController:
             logging.info(f"Step intensities: {self.step_intensities}")
             self.step_layers["sensor"] = self.step_intensities
 
+
+
+            try:
+                ts = time.time()
+                if 'data_logger' in globals() and data_logger is not None:
+                    data_logger.log(
+                        ts,
+                        self.distance,
+                        smoothed_distance,
+                        self.step_controller.steps_person_state
+                    )
+            except Exception as e:
+                logging.warning(f"Logger error: {e}")
             await asyncio.sleep(self.steps_wait_time)
 
     async def _setup_linear_drive_dmx_controllers(self, pulse_on_start=True):
@@ -723,7 +946,7 @@ class CinemaRoomController:
         self.linear_drive_dmx_controllers = (
             await self._setup_linear_drive_dmx_controllers()
         )
-        if self.system == "pi":
+        if self.enable_tof:
             self.step_controller.reset()
 
     async def _setup_stars(self, pulse_on_start=True):
@@ -926,17 +1149,72 @@ app.add_middleware(
 system = os.getenv("SYSTEM")
 ip = os.getenv("IP")
 
-system = "mac" if system is None else system
+system = "pi" if system is None else system
 ip = "192.168.1.191" if ip is None else ip
+data_logger = DataLogger()
+DATA_LOCK = threading.Lock()
+# Keep the last ~10 minutes at 10 Hz → 6000 points
+DIST_RING = deque(maxlen=6000)   # each item: (ts, tof, smooth, state)
+dash_app = Dash(
+    __name__,
+    requests_pathname_prefix="/dash/"  # ensures assets/URLs work under a subpath
+)
+
+dash_app.layout = html.Div(
+    style={"maxWidth":"1000px","margin":"0 auto","fontFamily":"system-ui, sans-serif"},
+    children=[
+        html.H3("ToF vs Smoothed Distance"),
+        dcc.Graph(id="dist-graph"),
+        dcc.Interval(id="tick", interval=500, n_intervals=0),
+        html.Div(id="status", style={"marginTop":"8px","opacity":0.7,"fontSize":"12px"})
+    ]
+)
+STATE_MAP = {"no_person": 0, "down": 1, "up": 2}
+
+@dash_app.callback(
+    [Output("dist-graph","figure"), Output("status","children")],
+    Input("tick","n_intervals")
+)
+def update_plot(_):
+    ts, tof, smooth, state = data_logger.snapshot() if 'data_logger' in globals() else ([],[],[],[])
+    if not ts:
+        return go.Figure(), "Waiting for data…"
+
+    x = [datetime.fromtimestamp(t) for t in ts]
+    state_coded = [STATE_MAP.get(s, 0) for s in state]
+
+    fig = go.Figure()
+    fig.add_scatter(x=x, y=tof, mode="lines", name="ToF (raw)", yaxis="y1")
+    fig.add_scatter(x=x, y=smooth, mode="lines", name="Smoothed", yaxis="y1")
+    fig.add_scatter(x=x, y=state_coded, mode="lines", name="State (0/1/2)", yaxis="y2")
+
+    fig.update_layout(
+        height=420,
+        margin=dict(l=40, r=10, t=20, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis_title="Time",
+        yaxis=dict(title="Distance (m)"),
+        yaxis2=dict(title="State", overlaying="y", side="right", rangemode="tozero", tickmode="array",
+                    tickvals=[0,1,2], ticktext=["no_person","down","up"]),
+        template="plotly_white",
+    )
+    latest = f"Latest — state: {state[-1]} | ToF: {tof[-1]:.2f} m | Smoothed: {smooth[-1]:.2f} m"
+    return fig, latest
+
+# mount it
+app.mount("/dash", WSGIMiddleware(dash_app.server))
+# enable_tof = os.getenv("ENABLE_TOF", "False").lower() in ("true", "1", "yes")
+
 # ip = "127.0.0.1"
 # Global controller instance
 try:
     settings = load_settings_from_file("settings.json")
-    controller = CinemaRoomController(**settings.dict())
+    controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
     logging.info("Loaded controller settings from JSON.")
 except Exception as e:
     logging.warning(f"Failed to load settings.json, using defaults. Error: {e}")
-    controller = CinemaRoomController(system=system, ip=ip)
+    settings = ControllerSettings()
+    controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
 
 
 @app.post("/reload_settings")
@@ -949,9 +1227,28 @@ def reload_settings():
         return {"status": "error", "message": str(e)}
 
 
+def current_settings_from_controller(controller) -> ControllerSettings:
+    data = {}
+    # Pydantic v2:
+    field_names = ControllerSettings.model_fields.keys()
+    for name in field_names:
+        if hasattr(controller, name):
+            data[name] = getattr(controller, name)
+        elif hasattr(controller.step_controller, name):
+            data[name] = getattr(controller.step_controller, name)
+        # else: leave unset (defaults apply)
+    return ControllerSettings(**data)
+
+
+
 @app.get("/settings")
 def get_settings():
-    return ControllerSettings(**controller.__dict__)
+    try:
+        return current_settings_from_controller(controller)
+    except Exception as e:
+        # Optional: log and surface something readable
+        logging.exception("Failed to build settings")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/settings")
 async def update_settings(settings: ControllerSettings):
@@ -960,17 +1257,8 @@ async def update_settings(settings: ControllerSettings):
     if controller:
         controller._running = False
         await controller.shutdown()  # <--- add this
-        # if controller_thread and controller_thread.is_alive():
-        #     controller_thread.join(timeout=5)
-    # await asyncio.sleep(0.5)  # Allow DMX to settle to zero
-
-    # Create a new controller with the updated settings
-    # controller = CinemaRoomController()
     controller.set_from_settings(settings)
     controller._running = True 
-    # await controller.setup()
-    # await asyncio.sleep(2.0)
-
     # Restart controller loop in new thread
     controller_thread = threading.Thread(
         target=start_asyncio_loop, args=(controller,), daemon=True
@@ -1005,6 +1293,28 @@ def save_settings(filename: str = Query("settings.json")):
             ambient_star_speed_max=controller.ambient_star_speed_max,
             ambient_star_speed_min=controller.ambient_star_speed_min,
             sequence_length=controller.sequence_length,
+            manual_distance_override=controller.manual_distance_override,
+            n_panels=controller.n_panels,
+            n_steps=controller.n_steps,
+            step_top_position_m=controller.step_controller.step_top_position_m,
+            step_bottom_position_m=controller.step_controller.step_bottom_position_m,
+            step_sigma_front=controller.step_controller.step_sigma_front,
+            step_sigma_back=controller.step_controller.step_sigma_back,
+            step_intensity_smoothing_alpha=controller.step_controller.step_intensity_smoothing_alpha,
+            step_reset_time=controller.step_controller.step_reset_time,
+            steps_mid_position_threshold=controller.step_controller.steps_mid_position_threshold,
+            steps_max_position_threshold=controller.step_controller.steps_max_position_threshold,
+            steps_min_position_threshold=controller.step_controller.steps_min_position_threshold,  
+            distance_outlier_threshold=controller.step_controller.distance_outlier_threshold,
+            steps_top_initial_pos_for_kalman=controller.step_controller.steps_top_initial_pos_for_kalman,
+            steps_bottom_initial_pos_for_kalman=controller.step_controller.steps_bottom_initial_pos_for_kalman,
+            frame_time=controller.step_controller.frame_time,
+            kalman_initial_uncertainty=controller.step_controller.kalman_initial_uncertainty,
+            kalman_measurement_variance=controller.step_controller.kalman_measurement_variance,
+            kalman_max_speed=controller.step_controller.kalman_max_speed,
+            kalman_distance_outlier_threshold=controller.step_controller.kalman_distance_outlier_threshold,
+            enable_tof=controller.enable_tof,
+            tof_angle=controller.tof_angle  
         )
         save_settings_to_file(settings, path=filename)
         return {"status": "ok", "path": filename}
@@ -1028,12 +1338,52 @@ def set_ambient_multiplier(value: float):
 @app.on_event("startup")
 async def start_controller():
     global controller, controller_thread
-    settings = load_settings_from_file("default.json")
-    controller = CinemaRoomController()
-    controller.set_from_settings(settings)
-
+    try:
+        settings = load_settings_from_file("default.json")
+        controller = CinemaRoomController(initialise=True)
+        controller.set_from_settings(settings)
+        logging.info("Loaded controller settings from JSON.")
+    except Exception as e:
+        logging.warning(f"Failed to load settings.json, using defaults. Error: {e}")
+        settings = ControllerSettings()
+        controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
     await controller.setup()
     controller_thread = threading.Thread(
         target=start_asyncio_loop, args=(controller,), daemon=True
     )
     controller_thread.start()
+
+
+@app.get("/logging/start")
+def start_logging(path: str = "tof_log.csv", buffer_minutes: int = 10):
+    global data_logger
+    try:
+        # 10 Hz * 60 * minutes
+        buf_size = max(600 * buffer_minutes, 600)  
+        data_logger = DataLogger(csv_path=path, buffer_size=buf_size)
+        return {"status": "ok", "path": str(Path(path).resolve())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/logging/stop")
+def stop_logging():
+    global data_logger
+    if data_logger is None:
+        return {"status": "ok", "message": "Logging was not running."}
+    try:
+        data_logger.close()
+        data_logger = None
+        return {"status": "ok", "message": "Logging stopped."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/logging/file")
+def get_logfile():
+    global data_logger
+    # Try current logger first; otherwise fall back to default file
+    csv_path = Path("tof_log.csv") if (data_logger is None) else data_logger.csv_path
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="No log file found.")
+    return FileResponse(str(csv_path), media_type="text/csv", filename=csv_path.name)

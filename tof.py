@@ -46,7 +46,6 @@ class TOF_Sense():
     #Open the Raspberry Pi serial port device 打开树莓派串口设备
     def __init__(self, dev = '/dev/ttyS0',baud = 921600):
         self.TOF_peek = 0 #Temporary storage of data 临时存放数据
-
         self.count_i = 0 #Loop count variable 循环计数变量
         self.check_sum = 0 #Checksum 校验和
         self.ser = serial.Serial(dev,baud)
@@ -147,11 +146,12 @@ def detect_pi_model():
         model = f.read().strip()  # Read and strip the model string
     return model
 
-class tof:
-    def __init__(self, delay=0.01):
+class tof():
+    def __init__(self, delay=0.01, tof_angle=0.0):
         self.delay = delay
         self.tof_sense = self.configure_tof()
         self.distance = 0.0
+        self.tof_angle = tof_angle
 
     def configure_tof(self):
         if "Raspberry Pi 5" in detect_pi_model():
@@ -165,7 +165,7 @@ class tof:
             # Use synchronous decoder and capture the printed distance
             distance = self.tof_sense.TOF_Inquire_Decoding(0)  # ← MODIFY THIS FUNCTION TO RETURN DISTANCE
             # meters
-            self.distance = distance / 1000
+            self.distance = (distance / 1000.0) * np.cos(np.radians(self.tof_angle))
             return self.distance
         except Exception as e:
             print("[ERROR] Failed to get ToF distance:", e)

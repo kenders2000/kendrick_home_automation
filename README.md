@@ -28,9 +28,17 @@ python -m venv env
 source env/bin/activate
 pip install numpy --prefer-binary
 pip install pyserial pyartnet fastapi uvicorn
-sudo apt install libopenblas0
+sudo apt update
+sudo apt install -y \
+  libopenblas0 build-essential python3-dev \
+  libjpeg-dev zlib1g-dev libfreetype6-dev libpng-dev \
+  libtiff5-dev libopenjp2-7-dev liblcms2-dev libwebp-dev \
+  tcl8.6-dev tk8.6-dev
+pip install --no-cache-dir --force-reinstall pillow
+pip install --no-cache-dir -U matplotlib
+pip install dash plotly
 
-
+// http://192.168.1.191:8000/dash/
 npx create-react-app cinema-controller-ui
 cd cinema-controller-ui
 npm start

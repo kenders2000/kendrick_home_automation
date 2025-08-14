@@ -1,0 +1,36 @@
+config/
+# bin folders
+**/[Bb]in/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+
+# Node / React
+node_modules/
+build/
+.cache/
+.next/
+out/
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs & data
+*.log
+logs/
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__/__init__.cpython-311.pyc
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__/TOF_Sense.cpython-311.pyc
