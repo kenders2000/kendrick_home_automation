@@ -31,6 +31,10 @@ Thumbs.db
 # Logs & data
 *.log
 logs/
-TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__
-TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__/__init__.cpython-311.pyc
-TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__/TOF_Sense.cpython-311.pyc
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/__pycache__/
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/*.py[cod]
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/*.pyo
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/build/
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/dist/
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/*.egg-info
+TOF_Laser_Range_Sensor_demo/Raspberry/python/I2C/lib/.venv
