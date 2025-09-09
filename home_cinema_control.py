@@ -120,7 +120,7 @@ class ControllerSettings(BaseModel):
     port: int = 6454
     system: str = "pi"
 
-    global_fade: int = 600
+    global_fade: int = 1000
     star_intensity_fade: int = 1000
     star_speed_fade: int = 500
 
@@ -130,11 +130,11 @@ class ControllerSettings(BaseModel):
 
     ambient_panel_intensity_max: int = 210
     ambient_panel_intensity_min: int = 75
-    ambient_panel_delay_max: float = 10.0
+    ambient_panel_delay_max: float = 5.0
 
-    ambient_step_intensity_max: int = 50
+    ambient_step_intensity_max: int = 25
     ambient_step_intensity_min: int = 5
-    ambient_step_delay_max: float = 5.0
+    ambient_step_delay_max: float = 1.0
 
     ambient_star_intensity_max: int = 255
     ambient_star_intensity_min: int = 100
@@ -147,14 +147,14 @@ class ControllerSettings(BaseModel):
 
     n_steps: int = 14
     n_panels: int = 6
-    tof_angle: float = 10
+    tof_angle: float = 20
     # this determines the distance to step num ber mapping
     step_top_position_m: float = 0.7
-    step_bottom_position_m: float = 5.5
-    step_sigma_front: float = 0.5
+    step_bottom_position_m: float = 6.5
+    step_sigma_front: float = 0.1
     step_sigma_back: float = 10.0
-    step_descending_ahead: float = 2.0
-    step_ascending_ahead: float = 1.0
+    step_descending_ahead: float = 1.0
+    step_ascending_ahead: float = 2.0
     step_intensity_smoothing_alpha: float = 0.0
     step_reset_time: float = 10.0
     steps_mid_position_threshold: float = 2.5
@@ -166,7 +166,7 @@ class ControllerSettings(BaseModel):
     frame_time: float = 0.1
     kalman_initial_uncertainty: float = 1.0
     kalman_measurement_variance: float = 0.5
-    kalman_max_speed: float = 1.0
+    kalman_max_speed: float = 2.0
     kalman_distance_outlier_threshold: float = 0.5
 
 
@@ -361,9 +361,9 @@ class StepTOFController:
             self.steps_person_state = "no_person"
             self.initialise_kalman_filter(0.0)
 
-        logging.info(
-            f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}"
-        )
+        # logging.info(
+        #     f"person state: {self.steps_person_state} counter for reset time: {self.countdown_no_person_state}"
+        # )
 
     def reset(self):
         """Reset controller state."""
@@ -481,6 +481,8 @@ class CinemaRoomController:
         kalman_measurement_variance=0.5,
         kalman_max_speed=1.0,
         kalman_distance_outlier_threshold=0.5,
+        movie_mode=False,
+        # ambient_multiplier_map=None,
     ):
         """
         Initialise the cinema room controller.
@@ -549,6 +551,9 @@ class CinemaRoomController:
         self.n_steps = n_steps
         # initialise the ambient multiplier at full intensity
         self.ambient_multiplier = 1.0
+        self.movie_mode = movie_mode
+        self.set_movie_mode(movie_mode)
+
         self.ambient_panel_intensity_max = ambient_panel_intensity_max
         self.ambient_panel_intensity_min = ambient_panel_intensity_min
         self.ambient_panel_delay_max = ambient_panel_delay_max
@@ -564,7 +569,7 @@ class CinemaRoomController:
         self.manual_distance_override = manual_distance_override
         self.enable_tof = enable_tof
         self.tof_angle = tof_angle
-        self.tof = tof(tof_angle)
+        self.tof = tof(tof_angle=tof_angle)
         self.distance = 0.0
         # if system == "pi":
         #     self.tof = tof()
@@ -777,7 +782,29 @@ class CinemaRoomController:
         """
         self.ambient_multiplier = ambient_multiplier
         logging.info(f"Ambient multiplier set to: {self.ambient_multiplier}")
-        
+
+    def set_movie_mode(self, movie_mode):
+        """
+        Set the movie mode value.
+
+        Parameters:
+            movie_mode (bool): The new value to set for the movie mode.
+        """
+        self.movie_mode = movie_mode
+        self.ambient_multiplier_map = {
+            "panels": {i: 1.0 for i in range(self.n_panels)},
+            "steps": {i: 1.0 for i in range(self.n_steps)},
+        }
+        if movie_mode:
+            # dim the panels near the screen 
+            # self.ambient_multiplier_map["panels"][3] = 0.05
+            # self.ambient_multiplier_map["panels"][4] = 0.05
+            self.ambient_multiplier_map["panels"][5] = 0.05
+
+        logging.info(f"Movie mode set to: {self.movie_mode}")
+
+
+
     def get_rand_sequences(
         self,
         intensity_min=30,
@@ -885,10 +912,10 @@ class CinemaRoomController:
             except Exception as e:
                 logging.warning(f"ToF sensor error: {e}")
 
-            logging.info(
-                f"ToF distance: {self.distance}, Smoothed distance: {smoothed_distance} steps_person_state: {self.step_controller.steps_person_state}"
-            )
-            logging.info(f"Step intensities: {self.step_intensities}")
+            # logging.info(
+            #     f"ToF distance: {self.distance}, Smoothed distance: {smoothed_distance} steps_person_state: {self.step_controller.steps_person_state}"
+            # )
+            # logging.info(f"Step intensities: {self.step_intensities}")
             self.step_layers["sensor"] = self.step_intensities
 
 
@@ -1023,7 +1050,14 @@ class CinemaRoomController:
                 "sensor": self.panel_layers["sensor"][panel_n],
                 "manual": self.panel_layers["manual"][panel_n],
             }
-            intensities.append(int(max(layers.values()) * self.ambient_multiplier))
+            current_intensity = int(max(layers.values()) * self.ambient_multiplier)
+            if self.ambient_multiplier_map is not None:
+                current_intensity = int(
+                    current_intensity * self.ambient_multiplier_map["panels"][panel_n]
+                )
+
+            intensities.append(current_intensity)
+            # intensities.append(int(max(layers.values()) * self.ambient_multiplier))
         return intensities
 
     def mix_intensity_stars(self):
@@ -1207,14 +1241,14 @@ app.mount("/dash", WSGIMiddleware(dash_app.server))
 
 # ip = "127.0.0.1"
 # Global controller instance
-try:
-    settings = load_settings_from_file("settings.json")
-    controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
-    logging.info("Loaded controller settings from JSON.")
-except Exception as e:
-    logging.warning(f"Failed to load settings.json, using defaults. Error: {e}")
-    settings = ControllerSettings()
-    controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
+# try:
+#     settings = load_settings_from_file("settings.json")
+#     controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
+#     logging.info("Loaded controller settings from JSON.")
+# except Exception as e:
+# logging.warning(f"Failed to load settings.json, using defaults. Error: {e}")
+settings = ControllerSettings()
+controller = CinemaRoomController(**settings.dict(), enable_tof=True, initialise=True)
 
 
 @app.post("/reload_settings")
@@ -1334,6 +1368,13 @@ def set_ambient_multiplier(value: float):
     controller.set_ambient_multiplier(value)
     logging.info(f"Changing ambient level: {value}")
     return {"status": "ok", "ambient_multiplier": value}
+
+@app.get("/movie_mode/{value}")
+def set_movie_model(value: bool):
+    controller.set_movie_mode(value)
+    logging.info(f"Settings movie mode: {value}")
+    return {"status": "ok", "movie_mode": value}
+
 
 @app.on_event("startup")
 async def start_controller():

@@ -9,7 +9,6 @@ function App() {
       <h1>Lighting Control UI</h1>
       <AmbientMultiplierSlider />
       <SaveLoadButtons />
-      <ControllerSettingsForm />
     </div>
   );
 }

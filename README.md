@@ -1,3 +1,22 @@
+# Start up
+
+```
+ssh beano@192.168.1.222
+tmux new -t paul
+cd ~/kendrick_home_automation
+source env/bin/activate
+cd cinema-controller-ui
+npm start
+
+# new window
+cd ~/kendrick_home_automation
+source env/bin/activate
+uvicorn home_cinema_control:app --host 0.0.0.0 --port 8000 --reload
+```
+
+
+
+
 https://www.waveshare.com/wiki/TOF_Laser_Range_Sensor_(C)#I2C_example
 
 
@@ -38,7 +57,7 @@ pip install --no-cache-dir --force-reinstall pillow
 pip install --no-cache-dir -U matplotlib
 pip install dash plotly
 
-// http://192.168.1.191:8000/dash/
+// http://192.168.1.222:8000/dash/
 npx create-react-app cinema-controller-ui
 cd cinema-controller-ui
 npm start
