@@ -121,6 +121,10 @@ class ControllerSettings(BaseModel):
     system: str = "pi"
 
     global_fade: int = 1000
+    panel_fade: int = 2000
+    ambient_step_fade: int = 2000
+    step_fade: int = 300
+
     star_intensity_fade: int = 1000
     star_speed_fade: int = 500
 
@@ -129,16 +133,16 @@ class ControllerSettings(BaseModel):
     controller_delay: float = 0.1
 
     ambient_panel_intensity_max: int = 210
-    ambient_panel_intensity_min: int = 75
+    ambient_panel_intensity_min: int = 10
     ambient_panel_delay_max: float = 5.0
 
     ambient_step_intensity_max: int = 25
     ambient_step_intensity_min: int = 5
     ambient_step_delay_max: float = 1.0
 
-    ambient_star_intensity_max: int = 255
-    ambient_star_intensity_min: int = 100
-    ambient_star_delay_max: float = 5.0
+    ambient_star_intensity_max: int = 100
+    ambient_star_intensity_min: int = 10
+    ambient_star_delay_max: float = 1.0
 
     ambient_star_speed_max: int = 255
     ambient_star_speed_min: int = 0
@@ -149,20 +153,20 @@ class ControllerSettings(BaseModel):
     n_panels: int = 6
     tof_angle: float = 20
     # this determines the distance to step num ber mapping
-    step_top_position_m: float = 0.7
-    step_bottom_position_m: float = 6.5
+    step_top_position_m: float = 0.8
+    step_bottom_position_m: float = 4.8
     step_sigma_front: float = 0.1
     step_sigma_back: float = 10.0
-    step_descending_ahead: float = 1.0
-    step_ascending_ahead: float = 2.0
+    step_descending_ahead: float = 3.0
+    step_ascending_ahead: float = 0.0
     step_intensity_smoothing_alpha: float = 0.0
     step_reset_time: float = 10.0
     steps_mid_position_threshold: float = 2.5
     steps_max_position_threshold: float = 6.0
-    steps_min_position_threshold: float = 0.5
+    steps_min_position_threshold: float = 0.8
     distance_outlier_threshold: float = 3.0
-    steps_top_initial_pos_for_kalman: float = 1.1
-    steps_bottom_initial_pos_for_kalman: float = 5.5
+    steps_top_initial_pos_for_kalman: float = 0.8
+    steps_bottom_initial_pos_for_kalman: float = 4.5
     frame_time: float = 0.1
     kalman_initial_uncertainty: float = 1.0
     kalman_measurement_variance: float = 0.5
@@ -312,6 +316,7 @@ class StepTOFController:
 
         # Keep your existing assignments
         self.distance = tof_distance
+        self.tof_distance = tof_distance
         self.update_steps_state(tof_distance, smoothed_distance, time_since_last_update)
         # self.distance = tof_distance
         # self.update_steps_state(tof_distance, smoothed_distance, time_since_last_update)
@@ -354,6 +359,7 @@ class StepTOFController:
             # we assume a person is detected at the top of the steps about to descend
             self.steps_person_state = "up"  # top or bottom
             self.countdown_no_person_state = 0.0
+            print("Detected person at bottom of steps", tof_distance)
             self.initialise_kalman_filter(tof_distance, direction=self.steps_person_state)
         else:
             # if the timer has expired, reset the counter and reset the steps state to no persons detected
@@ -438,6 +444,9 @@ class CinemaRoomController:
         port=6454,
         system="mac",
         global_fade=600,
+        step_fade=1000,       
+        panel_fade=1000,
+        ambient_step_fade=2000,
         star_intensity_fade=1000,
         star_speed_fade=500,
         setup_delay=0.1,
@@ -517,6 +526,9 @@ class CinemaRoomController:
         self.ip = ip
         self.port = port
         self.global_fade = global_fade
+        self.panel_fade = panel_fade
+        self.step_fade = step_fade
+        self.ambient_step_fade = ambient_step_fade
         self.star_intensity_fade = star_intensity_fade
         self.star_speed_fade = star_speed_fade
         self.universe_id = universe_id
@@ -694,11 +706,13 @@ class CinemaRoomController:
                 "controller_n": [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3],
                 "local_channel_n": [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1],
                 "dmx_channel": list(range(3, 17)),
+                "fade_time": self.step_fade,
             },
             "panels": {
                 "controller_n": [4, 4, 4, 4, 5, 5, 5, 5],
                 "local_channel_n": [0, 1, 2, 3, 0, 1, 2, 3],
                 "dmx_channel": [19, 20, 21, 22, 23, 24, 25, 26],
+                "fade_time": self.panel_fade,
             },
         }
         self.channels = {
@@ -715,6 +729,7 @@ class CinemaRoomController:
         self.system = settings.system
 
         self.global_fade = settings.global_fade
+        self.panel_fade = settings.panel_fade
         self.star_intensity_fade = settings.star_intensity_fade
         self.star_speed_fade = settings.star_speed_fade
 
@@ -797,8 +812,8 @@ class CinemaRoomController:
         }
         if movie_mode:
             # dim the panels near the screen 
-            # self.ambient_multiplier_map["panels"][3] = 0.05
-            # self.ambient_multiplier_map["panels"][4] = 0.05
+            self.ambient_multiplier_map["panels"][3] = 0.05
+            self.ambient_multiplier_map["panels"][4] = 0.05
             self.ambient_multiplier_map["panels"][5] = 0.05
 
         logging.info(f"Movie mode set to: {self.movie_mode}")
@@ -1000,11 +1015,12 @@ class CinemaRoomController:
             panel_intensities = self.mix_intensity_panels()
             step_intensities = self.mix_intensity_steps()
             stars_intensity, stars_position = self.mix_intensity_stars()
+
             # stars_position = stars_intensity.copy()
 
             # we have 6 linear_drive_dmx_controllers, each 4 channels
             controller_intensities = np.zeros((6, 4)).astype(int)
-
+            fades = np.zeros((6, 4)).astype(int) + self.global_fade
             # steps
             for controller_n, local_channel_n, step_intensity in zip(
                 self.lineardriver_controller_mappings["steps"]["controller_n"],
@@ -1012,6 +1028,10 @@ class CinemaRoomController:
                 step_intensities,
             ):
                 controller_intensities[controller_n, local_channel_n] = step_intensity
+                if self.step_controller.steps_person_state == "no_person":
+                    fades[controller_n, local_channel_n] = self.ambient_step_fade
+                else:
+                    fades[controller_n, local_channel_n] = self.step_fade
             # panels
             for controller_n, local_channel_n, panel_intensity in zip(
                 self.lineardriver_controller_mappings["panels"]["controller_n"],
@@ -1019,6 +1039,7 @@ class CinemaRoomController:
                 panel_intensities,
             ):
                 controller_intensities[controller_n, local_channel_n] = panel_intensity
+                fades[controller_n, local_channel_n] = self.panel_fade
             # stars
             self.stars["intensity"].add_fade(
                 [stars_intensity], self.star_intensity_fade
@@ -1033,7 +1054,7 @@ class CinemaRoomController:
                 self.linear_drive_dmx_controllers
             ):
                 controller.add_fade(
-                    controller_intensities[controller_n], self.global_fade
+                    controller_intensities[controller_n], max(fades[controller_n])
                 )
                 await asyncio.sleep(self.controller_delay)
                 # await asyncio.sleep(
