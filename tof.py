@@ -166,7 +166,8 @@ class tof():
             distance = self.tof_sense.TOF_Inquire_Decoding(0)  # ← MODIFY THIS FUNCTION TO RETURN DISTANCE
             # meters
             # print(self.tof_angle, np.cos(np.radians(self.tof_angle)))
-            self.distance = (distance / 1000.0) * np.cos(np.radians(self.tof_angle))
+            # self.distance = (distance / 1000.0) * np.cos(np.radians(self.tof_angle))
+            self.distance = (distance / 1000.0) * np.cos(np.radians(50)) / np.cos(np.radians(41))
             # print("ToF distance is:", self.distance, "Uncorrected:", distance / 1000.0)
             return self.distance
         except Exception as e:

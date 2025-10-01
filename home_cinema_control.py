@@ -153,17 +153,17 @@ class ControllerSettings(BaseModel):
     n_panels: int = 6
     tof_angle: float = 20
     # this determines the distance to step num ber mapping
-    step_top_position_m: float = 0.8
-    step_bottom_position_m: float = 4.8
+    step_top_position_m: float = 0.6
+    step_bottom_position_m: float = 4.2
     step_sigma_front: float = 0.1
     step_sigma_back: float = 10.0
-    step_descending_ahead: float = 3.0
-    step_ascending_ahead: float = 0.0
+    step_descending_ahead: float = 2.0
+    step_ascending_ahead: float = 1.0
     step_intensity_smoothing_alpha: float = 0.0
     step_reset_time: float = 10.0
     steps_mid_position_threshold: float = 2.5
-    steps_max_position_threshold: float = 6.0
-    steps_min_position_threshold: float = 0.8
+    steps_max_position_threshold: float = 4.8
+    steps_min_position_threshold: float = 0.1
     distance_outlier_threshold: float = 3.0
     steps_top_initial_pos_for_kalman: float = 0.8
     steps_bottom_initial_pos_for_kalman: float = 4.5
@@ -243,6 +243,7 @@ class StepTOFController:
             steps_top_initial_pos_for_kalman (float): Initial position for top of steps.
             steps_bottom_initial_pos_for_kalman (float): Initial position for bottom of steps.
         """
+        self.logger = logging.getLogger("StepTOFController")
         self.n_steps = n_steps
         self.step_top_position_m = step_top_position_m
         self.step_bottom_position_m = step_bottom_position_m
@@ -328,9 +329,12 @@ class StepTOFController:
         # self.kalman_filter.predict(expected_velocity=self.estimated_velocity, dt=self.frame_time)
         # self.smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
         # each frame (dt = self.frame_time):
-        pred_pos = self.kalman_filter.predict(dt=self.frame_time)    # coast
-        smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
-        self.smoothed_distance, vel = self.kalman_filter.get_state()
+        if run_smoothing:
+            pred_pos = self.kalman_filter.predict(dt=self.frame_time)    # coast
+            smoothed_distance = self.kalman_filter.update(self.distance, run_smoothing=run_smoothing)
+            self.smoothed_distance, vel = self.kalman_filter.get_state()
+        else:
+            self.smoothed_distance = self.tof_distance
         return self.smoothed_distance
 
     def update_steps_state(self, tof_distance, smoothed_distance, time):
@@ -363,7 +367,6 @@ class StepTOFController:
             self.initialise_kalman_filter(tof_distance, direction=self.steps_person_state)
         else:
             # if the timer has expired, reset the counter and reset the steps state to no persons detected
-            self.countdown_no_person_state = self.step_reset_time
             self.steps_person_state = "no_person"
             self.initialise_kalman_filter(0.0)
 
@@ -381,9 +384,14 @@ class StepTOFController:
 
     def get_step_position(self, distance_m):
         """Convert physical distance to step index (can be fractional)."""
+
+        distance_from_top_step = distance_m - self.step_top_position_m
         span = self.step_bottom_position_m - self.step_top_position_m
-        step_position = self.n_steps * (distance_m - self.step_top_position_m) / span
-        return np.clip(step_position, 0, self.n_steps - 1)
+
+        step_position = (self.n_steps - 1) * (distance_from_top_step / span)
+        step_position = self.n_steps - step_position
+        return step_position
+        # return np.clip(step_position, 0, self.n_steps - 1)
 
     def asymmetric_gaussian_profile(self, step_position, direction="down"):
         """Return an asymmetric Gaussian profile centered at the given step index."""
@@ -420,20 +428,25 @@ class StepTOFController:
         """
         if distance_m is None:
             return np.zeros(self.n_steps, dtype=int)
-        distance_m = np.clip(steps_length - distance_m, 0, steps_length)
         step_pos = self.get_step_position(distance_m)
         if self.steps_person_state == "no_person":
             return np.zeros(self.n_steps).astype(int)
-        self.intensities = (
-            self.asymmetric_gaussian_profile(
-                step_pos, direction=self.steps_person_state
-            )
-            * 255
-        ).astype(int)
+        # elif self.steps_person_state == "complete":
+        #     await self.up_down_effect()
+        if self.steps_person_state in ["up", "down"]:
+            self.intensities = (
+                self.asymmetric_gaussian_profile(
+                    step_pos, direction=self.steps_person_state
+                )
+                * 255
+            ).astype(int)
+
         if self.step_intensity_smoothing_alpha > 0.0:
             self.intensities = self.exp_smoother.update(self.intensities).astype(int)
-
+        # self.logger.info(f"Step pos: {step_pos:.2f}, intensities: {self.intensities}")
         return self.intensities
+
+
 
 
 class CinemaRoomController:
@@ -887,14 +900,12 @@ class CinemaRoomController:
             try:
                 # dont use kalman filter when no person is detected
                 if self.step_controller.steps_person_state == "no_person":
-                    run_smoothing = True
+                    run_smoothing = False
                     smoothed_distance = self.distance
                 else:
                     run_smoothing = True
 
                 self.step_intensities = np.zeros(self.n_steps)
-                
-                # self.distance = 0.0
 
                 if self.manual_distance_override is not None:
                     self.distance = self.manual_distance_override
@@ -904,7 +915,6 @@ class CinemaRoomController:
                         smoothed_distance,
                         self.steps_wait_time
                     )
-
                     smoothed_distance = self.step_controller.get_smoothed_distance(run_smoothing=run_smoothing)
 
 
@@ -912,7 +922,9 @@ class CinemaRoomController:
                     self.distance = self.tof.get_distance()
                     
                     self.step_controller.update_distance(
-                        self.distance, smoothed_distance, self.steps_wait_time
+                        self.distance, 
+                        smoothed_distance, 
+                        self.steps_wait_time
                     )
                     smoothed_distance = self.step_controller.get_smoothed_distance(run_smoothing=run_smoothing)
                 else:
@@ -946,7 +958,9 @@ class CinemaRoomController:
                     )
             except Exception as e:
                 logging.warning(f"Logger error: {e}")
+
             await asyncio.sleep(self.steps_wait_time)
+
 
     async def _setup_linear_drive_dmx_controllers(self, pulse_on_start=True):
         """
